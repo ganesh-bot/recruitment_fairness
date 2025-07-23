@@ -3,13 +3,18 @@ repos:
     rev: 23.3.0
     hooks:
       - id: black
+        exclude: |
+          (\.ipynb$|^data/|^notebooks/)
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
     hooks:
       - id: isort
-
+        exclude: |
+          (\.ipynb$|^data/|^notebooks/)
   - repo: https://github.com/PyCQA/flake8
     rev: 7.3.0 # or whichever latest tag you want
     hooks:
       - id: flake8
+        exclude: |
+          (\.ipynb$|^data/|^notebooks/)
