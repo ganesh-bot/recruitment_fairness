@@ -1,30 +1,65 @@
-# tests/test_loader.py
-import pandas as pd
+import pytest
 
-from recruitment_fairness.data.loader import clean_dataframe
+from recruitment_fairness.data.loader import ClinicalTrialsWebCollector
 
 
-def make_raw_df():
-    return pd.DataFrame(
-        {
-            "NCTId": ["NCT0001", None],
-            "OverallStatus": ["Completed", "Recruiting"],
-            "Phase": ["Phase 1", "Phase 2"],
-            "Condition": [" Diabetes ", None],
-            "InterventionName": [None, "DrugA"],
+@pytest.fixture
+def mock_study():
+    return {
+        "protocolSection": {
+            "identificationModule": {
+                "nctId": "NCT0001",
+                "briefTitle": "Test Trial",
+                "officialTitle": "Official Test Trial Title",
+            },
+            "descriptionModule": {
+                "briefSummary": "Short summary of the trial.",
+                "detailedDescription": "Detailed description here.",
+            },
+            "statusModule": {
+                "overallStatus": "Completed",
+                "whyStopped": "",
+                "startDateStruct": {"date": "2020-01-01"},
+                "completionDateStruct": {"date": "2021-01-01"},
+                "primaryCompletionDateStruct": {"date": "2020-12-01"},
+            },
+            "designModule": {
+                "studyType": "Interventional",
+                "phases": ["Phase 2"],
+                "designInfo": {
+                    "allocation": "Randomized",
+                    "interventionModel": "Parallel Assignment",
+                    "maskingInfo": {"masking": "Double"},
+                    "primaryPurpose": "Treatment",
+                },
+                "enrollmentInfo": {"count": 100, "type": "Actual"},
+            },
+            "sponsorCollaboratorsModule": {
+                "leadSponsor": {"name": "Mock Sponsor", "class": "Industry"}
+            },
+            "armsInterventionsModule": {
+                "interventions": [
+                    {
+                        "name": "Drug A",
+                        "type": "Drug",
+                        "description": "Test drug description",
+                        "meshTerms": ["MESH1"],
+                        "otherIds": [],
+                    }
+                ]
+            },
         }
-    )
+    }
 
 
-def test_clean_dataframe_drops_missing_ids():
-    df = make_raw_df()
-    cleaned = clean_dataframe(df)
-    # Should drop the None NCTId row
-    assert cleaned.shape[0] == 1
+def test_extract_fields_structure(mock_study):
+    collector = ClinicalTrialsWebCollector()
+    extracted = collector._extract_fields(mock_study)
 
-
-def test_clean_dataframe_standardizes_text():
-    df = make_raw_df()
-    cleaned = clean_dataframe(df)
-    assert cleaned.loc[0, "Condition"] == "diabetes"
-    assert cleaned.loc[0, "InterventionName"] == "unknown"
+    assert isinstance(extracted, dict)
+    assert extracted["nct_id"] == "NCT0001"
+    assert extracted["brief_title"] == "Test Trial"
+    assert extracted["sponsor"] == "Mock Sponsor"
+    assert extracted["study_type"] == "Interventional"
+    assert extracted["phases"] == "Phase 2"
+    assert "interventions_names" in extracted

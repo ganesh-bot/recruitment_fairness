@@ -1,102 +1,111 @@
-# tests/test_preprocess.py
-
-# import os
-
 import numpy as np
 import pandas as pd
 import pytest
 
-from recruitment_fairness.data.preprocess import (
-    encode_phases,
-    save_npz,
-    split_trials,
-    vectorize_conditions,
-)
+from recruitment_fairness.data.preprocess import ClinicalTrialPreprocessor
 
 
-def make_status_df(n_per_class=50):
-    """Helper: create a DataFrame with balanced 'OverallStatus' classes."""
-    df = pd.DataFrame({"OverallStatus": ["A"] * n_per_class + ["B"] * n_per_class})
-    return df
+@pytest.fixture
+def mock_df():
+    # 10 rows, 5 with 'Completed' (is_success=1), 5 with other statuses (is_success=0)
+    return pd.DataFrame(
+        {
+            "overall_status": [
+                "Completed",
+                "Completed",
+                "Completed",
+                "Completed",
+                "Completed",
+                "Terminated",
+                "Withdrawn",
+                "Suspended",
+                "Terminated",
+                "Withdrawn",
+            ],
+            "sponsor_class": [
+                "Industry",
+                "NIH",
+                "Other",
+                "NIH",
+                "Other",
+                "Industry",
+                "NIH",
+                "Other",
+                "Industry",
+                "NIH",
+            ],
+            "interventions_names": [
+                "DrugA",
+                "DrugB",
+                "DeviceA",
+                "DeviceB",
+                "DeviceC",
+                "DrugC",
+                "DrugD",
+                "DeviceX",
+                "DrugE",
+                "DrugF",
+            ],
+            "phases": [
+                "Phase 1",
+                "Phase 2",
+                "Phase 3",
+                "Phase 1",
+                "Phase 2",
+                "Phase 3",
+                "Phase 1",
+                "Phase 2",
+                "Phase 1",
+                "Phase 3",
+            ],
+            "enrollment_count": [100, 200, 150, 120, 130, 80, 90, 60, 70, 110],
+        }
+    )
 
 
-def test_split_trials_stratified():
-    df = make_status_df(n_per_class=50)
-    train, val, test = split_trials(df, test_size=0.2, val_size=0.1, random_state=0)
+def test_preprocess_basic(tmp_path, mock_df):
+    pre = ClinicalTrialPreprocessor(data_dir=tmp_path, processed_dir=tmp_path)
+    train, val, test = pre.preprocess(mock_df)
 
-    # sizes
-    assert len(test) == 20
-    assert len(val) == 10
-    assert len(train) == 70
+    # Check splits
+    total = len(train) + len(val) + len(test)
+    assert total == len(mock_df)
 
-    # stratification preserved
-    vc_train = train["OverallStatus"].value_counts(normalize=True)
-    vc_val = val["OverallStatus"].value_counts(normalize=True)
-    vc_test = test["OverallStatus"].value_counts(normalize=True)
+    # Check new column added
+    for df in (train, val, test):
+        assert "is_success" in df.columns
+        assert set(df["is_success"].unique()).issubset({0, 1})
 
-    # each split should be ~50/50
-    for vc in (vc_train, vc_val, vc_test):
-        assert pytest.approx(vc["A"], rel=1e-2) == vc["B"]
+    # Check cleaned values
+    assert train["sponsor_class"].isnull().sum() == 0
+    assert train["interventions_names"].isnull().sum() == 0
+    assert train["phases"].isnull().sum() == 0
 
-
-def test_vectorize_conditions_shapes_and_vocab():
-    train = pd.Series(["alpha beta", "beta gamma", "gamma delta"])
-    val = pd.Series(["alpha beta"])
-    test = pd.Series(["delta epsilon"])
-
-    X_tr, X_va, X_te, vec = vectorize_conditions(train, val, test, max_features=10)
-
-    # shapes
-    assert X_tr.shape == (3, len(vec.vocabulary_))
-    assert X_va.shape == (1, len(vec.vocabulary_))
-    assert X_te.shape == (1, len(vec.vocabulary_))
-
-    # vocabulary contains expected tokens
-    for token in ["alpha", "beta", "gamma", "delta"]:
-        assert token in vec.vocabulary_
+    # Check files saved
+    assert (tmp_path / "train.csv").exists()
+    assert (tmp_path / "val.csv").exists()
+    assert (tmp_path / "test.csv").exists()
 
 
-def test_encode_phases_onehot():
-    train = pd.Series(["Phase 1", "Phase 2", "Phase 3", "Phase 1"])
-    val = pd.Series(["Phase 2"])
-    test = pd.Series(["Phase 3"])
+def test_encode_features(mock_df):
+    pre = ClinicalTrialPreprocessor()
+    encoded_X, encoded_y, ohe, le = pre.encode_features(mock_df)
 
-    X_tr, X_va, X_te, enc = encode_phases(train, val, test, drop="first")
-
-    # drop='first' means 3 categories → 2 output columns
-    assert X_tr.shape == (4, 2)
-    assert X_va.shape == (1, 2)
-    assert X_te.shape == (1, 2)
-
-    # Check that val encoding matches the second category ("Phase 2")
-    # Feature names are like ["Phase_Phase 2","Phase_Phase 3"]
-    feat_names = enc.get_feature_names_out(["Phase"])
-    assert feat_names.tolist() == ["Phase_Phase 2", "Phase_Phase 3"]
-    assert X_va[0].tolist() == [1, 0]  # Phase 2 → [1,0]
+    assert isinstance(encoded_X, np.ndarray)
+    assert isinstance(encoded_y, np.ndarray)
+    assert encoded_X.shape[0] == len(mock_df)
+    assert encoded_y.shape[0] == len(mock_df)
+    assert hasattr(ohe, "categories_")
+    assert hasattr(le, "classes_")
 
 
-def test_save_npz_creates_files_and_content(tmp_path):
-    # create tiny arrays
-    X_dict = {
-        "train": np.arange(6).reshape(3, 2),
-        "val": np.arange(4).reshape(2, 2),
-        "test": np.arange(2).reshape(1, 2),
-    }
-    y_dict = {
-        "train": np.array([0, 1, 0]),
-        "val": np.array([1, 0]),
-        "test": np.array([0]),
-    }
+def test_get_structured_features(mock_df):
+    pre = ClinicalTrialPreprocessor()
+    X, cat_cols = pre.get_structured_features(mock_df)
 
-    out_dir = tmp_path / "processed"
-    save_npz(str(out_dir), X_dict, y_dict)
-
-    # check files exist
-    for split in ("train", "val", "test"):
-        path = out_dir / f"{split}.npz"
-        assert path.exists()
-
-        # check contents
-        data = np.load(path)
-        assert np.array_equal(data["X"], X_dict[split])
-        assert np.array_equal(data["y"], y_dict[split])
+    assert isinstance(X, pd.DataFrame)
+    assert "enrollment_count" in X.columns
+    assert any(col.startswith("phase_") for col in X.columns)
+    assert "sponsor_class" in X.columns
+    assert isinstance(cat_cols, list)
+    assert X.columns[cat_cols[0]] == "sponsor_class"

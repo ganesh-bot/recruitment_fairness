@@ -5,7 +5,9 @@ from pathlib import Path
 
 # import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+
+# from sklearn.exceptions import NotFittedError
+from sklearn.model_selection import train_test_split  # ,StratifiedShuffleSplit
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 
 
@@ -47,13 +49,20 @@ class ClinicalTrialPreprocessor:
         df["is_success"] = df["overall_status"].apply(
             lambda x: 1 if x.lower() == "completed" else 0
         )
-        # Split
-        train, test = train_test_split(
-            df, test_size=0.2, stratify=df["is_success"], random_state=42
-        )
-        train, val = train_test_split(
-            train, test_size=0.1, stratify=train["is_success"], random_state=42
-        )
+
+        try:
+            # Try stratified split
+            train, test = train_test_split(
+                df, test_size=0.2, stratify=df["is_success"], random_state=42
+            )
+            train, val = train_test_split(
+                train, test_size=0.1, stratify=train["is_success"], random_state=42
+            )
+        except ValueError as e:
+            print(f"⚠️ Stratified split failed: {e}. Falling back to random split.")
+            train, test = train_test_split(df, test_size=0.2, random_state=42)
+            train, val = train_test_split(train, test_size=0.1, random_state=42)
+
         print(f"Splits: train={len(train)}, val={len(val)}, test={len(test)}")
         # Save splits
         train.to_csv(self.processed_dir / "train.csv", index=False)
