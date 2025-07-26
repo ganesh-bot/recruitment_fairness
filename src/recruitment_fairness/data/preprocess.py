@@ -1,100 +1,171 @@
 # src/recruitment_fairness/data/preprocess.py
 
-# import json
+import re
 from pathlib import Path
 
-# import numpy as np
+import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
-# from sklearn.exceptions import NotFittedError
-from sklearn.model_selection import train_test_split  # ,StratifiedShuffleSplit
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from .labels import label_outcome, label_recruitment_success
 
 
 class ClinicalTrialPreprocessor:
-    def __init__(self, data_dir="data/raw", processed_dir="data/processed"):
+    def __init__(
+        self,
+        data_dir: str = "data/raw",
+        processed_dir: str = "data/processed",
+        random_state: int = 42,
+    ):
         self.data_dir = Path(data_dir)
         self.processed_dir = Path(processed_dir)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
+        self.random_state = random_state
 
-    def load_latest_raw(self):
+    def load_latest_raw(self) -> pd.DataFrame:
         files = sorted(self.data_dir.glob("raw_clinical_trials_*.csv"))
         if not files:
             raise FileNotFoundError("No raw files found.")
-        file = files[-1]
-        df = pd.read_csv(file)
-        print(f"📂 Loaded: {file}")
+        df = pd.read_csv(files[-1])
+        print(f"📂 Loaded raw data: {files[-1].name}")
         return df
 
     def preprocess(self, df: pd.DataFrame):
-        # Drop NAs for target/outcome
+        # backfill if missing
+        if (
+            "planned_enrollment" not in df.columns
+            or df["planned_enrollment"].isna().all()
+        ):
+            df["planned_enrollment"] = df["enrollment_count"]
+        if (
+            "actual_enrollment" not in df.columns
+            or df["actual_enrollment"].isna().all()
+        ):
+            df["actual_enrollment"] = df["enrollment_count"]
+
+        # 1) Drop missing overall status
         df = df.dropna(subset=["overall_status"])
 
-        # Use only sponsor_class (low cardinality), drop raw sponsor_name
-        # drop any raw 'sponsor' or 'sponsor_name' columns if they exist
-        df = df.drop(
-            columns=[c for c in ["sponsor", "sponsor_name"] if c in df.columns]
-        )
+        # 2) Label outcomes & recruitment
+        df["y_outcome"] = label_outcome(df)
+        df["y_recruit"] = label_recruitment_success(df)
+        df = df.dropna(subset=["y_outcome", "y_recruit"]).copy()
+        if df.empty:
+            raise ValueError(
+                "No trials left after labeling. "
+                "Did you pull from the AACT snapshot (with actual_enrollment etc.), "
+                "or only the v2 JSON API? You need planned vs. actual enrollment "
+                "and dates to label."
+            )
 
-        # ensure sponsor_class is string and no NaNs
-        df["sponsor_class"] = df["sponsor_class"].fillna("OTHER").astype(str)
-
-        # Basic cleaning for intervention_names
-        df["interventions_names"] = (
-            df["interventions_names"].fillna("unknown").str.lower()
+        # 3) Normalize some text columns
+        df["sponsor_class"] = (
+            df["sponsor_class"].fillna("OTHER").astype(str).str.upper()
         )
-        # Basic phase cleaning (collapse missing/NA to "unknown")
-        df["phases"] = df["phases"].replace("", "unknown").fillna("unknown")
-        # Optional: Add a "success" flag for the primary ML task
-        df["is_success"] = df["overall_status"].apply(
-            lambda x: 1 if x.lower() == "completed" else 0
-        )
+        df["phases"] = df["phases"].fillna("unknown").astype(str).str.lower()
 
+        # 4) Pandemic flag
+        df["year_started"] = pd.to_datetime(df["start_date"], errors="coerce").dt.year
+        df["pandemic"] = df["year_started"].isin([2020, 2021]).astype(int)
+
+        # ─── NEW STRUCTURED FEATURES ──────────────────────────────────────────
+        # Enrollment rate (# per month)
+        df["enroll_rate"] = (
+            df["actual_enrollment"] / df["actual_duration_m"].replace({0: np.nan})
+        ).fillna(0)
+
+        # Enrollment ratio (actual vs planned)
+        df["enroll_ratio"] = (
+            df["actual_enrollment"] / df["planned_enrollment"].replace({0: np.nan})
+        ).fillna(0)
+        # ──────────────────────────────────────────────────────────────────────
+
+        # ─── NEW COMBINED TEXT FIELD ──────────────────────────────────────────
+        def clean_whitespace(text: str) -> str:
+            return re.sub(r"\s+", " ", text).strip()
+
+        df["combined_text"] = (
+            df["brief_title"].fillna("")
+            + "  "
+            + df["official_title"].fillna("")
+            + "  "
+            + df["brief_summary"].fillna("")
+            + "  "
+            + df["detailed_description"].fillna("")
+            + "  "
+            + df.get("eligibility_criteria", "").fillna("")
+        ).apply(clean_whitespace)
+        # ──────────────────────────────────────────────────────────────────────
+
+        # 5) Train / Val / Test split (80/10/10 stratified on y_outcome)
         try:
-            # Try stratified split
-            train, test = train_test_split(
-                df, test_size=0.2, stratify=df["is_success"], random_state=42
+            trainval, test = train_test_split(
+                df,
+                test_size=0.20,
+                stratify=df["y_outcome"],
+                random_state=self.random_state,
             )
             train, val = train_test_split(
-                train, test_size=0.1, stratify=train["is_success"], random_state=42
+                trainval,
+                test_size=0.125,
+                stratify=trainval["y_outcome"],
+                random_state=self.random_state,
             )
         except ValueError as e:
-            print(f"⚠️ Stratified split failed: {e}. Falling back to random split.")
-            train, test = train_test_split(df, test_size=0.2, random_state=42)
-            train, val = train_test_split(train, test_size=0.1, random_state=42)
+            print(f"⚠️ Stratified split failed ({e}) — falling back to random split")
+            trainval, test = train_test_split(
+                df, test_size=0.20, random_state=self.random_state
+            )
+            train, val = train_test_split(
+                trainval, test_size=0.125, random_state=self.random_state
+            )
 
         print(f"Splits: train={len(train)}, val={len(val)}, test={len(test)}")
-        # Save splits
+
+        # 6) Persist
         train.to_csv(self.processed_dir / "train.csv", index=False)
         val.to_csv(self.processed_dir / "val.csv", index=False)
         test.to_csv(self.processed_dir / "test.csv", index=False)
+
         return train, val, test
 
-    def encode_features(self, df: pd.DataFrame):
-        # Example: One-hot encode 'phases', Label encode sponsor type
-        ohe = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
-        phase_encoded = ohe.fit_transform(df[["phases"]])
-        le = LabelEncoder()
-        status_encoded = le.fit_transform(df["overall_status"])
-        # Output features/labels as arrays
-        return phase_encoded, status_encoded, ohe, le
-
     def get_structured_features(self, df: pd.DataFrame):
-        # 1) one-hot your phases (numeric)
-        phases = pd.get_dummies(
-            df["phases"].fillna("unknown").astype(str), prefix="phase"
+        # force any blank or missing 'phases' into "unknown"
+        phase_ser = (
+            df["phases"]
+            .fillna("unknown")  # catch NaNs
+            .astype(str)
+            .replace("", "unknown")  # catch literal empty strings
+            .str.lower()
         )
-        # 2) keep sponsor_class raw (string)
+        # now get_dummies will always produce a 'phase_unknown' and never bare 'phase_'
+        phases = pd.get_dummies(phase_ser, prefix="phase")
+        # (optional) sort your dummy columns for consistency:
+        phases = phases.reindex(sorted(phases.columns), axis=1)
+
+        # keep sponsor_class as single categorical (CatBoost index later)
         sponsor = df["sponsor_class"].astype(str).to_frame("sponsor_class")
-        # 3) numeric enrollment
-        enrollment = (
-            df["enrollment_count"].fillna(0).astype(float).to_frame("enrollment_count")
-        )
 
-        # 4) concat
-        X = pd.concat([phases, sponsor, enrollment], axis=1)
+        # numeric features — now includes the two new ones
+        numeric_cols = [
+            "enrollment_count",
+            "planned_enrollment",
+            "actual_enrollment",
+            "planned_duration_m",
+            "actual_duration_m",
+            "num_arms",
+            "has_dmc",
+            "multi_country",
+            "pandemic",
+            "enroll_rate",
+            "enroll_ratio",
+        ]
+        numeric = df[numeric_cols].fillna(0).astype(float)
 
-        # 5) CatBoost only needs the index of sponsor_class
-        cat_cols = [X.columns.get_loc("sponsor_class")]
+        # assemble X
+        X = pd.concat([phases, sponsor, numeric], axis=1)
 
-        return X, cat_cols
+        # find index of the single categorical column
+        cat_idx = [X.columns.get_loc("sponsor_class")]
+
+        return X, cat_idx

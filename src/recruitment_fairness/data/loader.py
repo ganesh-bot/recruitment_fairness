@@ -29,96 +29,177 @@ class ClinicalTrialsWebCollector:
                     params["query.cond"] = query_term
                 if page_token:
                     params["pageToken"] = page_token
+
                 r = requests.get(self.base_url, params=params, timeout=30)
                 r.raise_for_status()
                 data = r.json()
-                if "studies" not in data or not data["studies"]:
+                studies = data.get("studies", [])
+                if not studies:
                     break
-                processed = [self._extract_fields(study) for study in data["studies"]]
+
+                processed = [self._extract_fields(s) for s in studies]
                 all_studies.extend(filter(None, processed))
                 pbar.update(len(processed))
+
                 page_token = data.get("nextPageToken")
                 if not page_token:
                     break
+
                 time.sleep(self.rate_limit)
             except Exception as e:
                 print(f"⚠️ Error: {e}")
                 break
         pbar.close()
+
         df = pd.DataFrame(all_studies[:max_studies])
         if not df.empty:
-            timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-            out_file = self.output_dir / f"raw_clinical_trials_{timestamp}.csv"
-            df.to_csv(out_file, index=False)
-            print(f"✅ {len(df)} trials saved to {out_file}")
+            ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+            out = self.output_dir / f"raw_clinical_trials_{ts}.csv"
+            df.to_csv(out, index=False)
+            print(f"✅ {len(df)} trials saved to {out}")
         else:
             print("❌ No studies collected")
         return df
 
     def _extract_fields(self, study):
         try:
-            protocol = study.get("protocolSection", {})
-            identification = protocol.get("identificationModule", {})
-            description = protocol.get("descriptionModule", {})
-            status = protocol.get("statusModule", {})
-            design = protocol.get("designModule", {})
-            collab_mod = protocol.get("sponsorCollaboratorsModule", {}) or {}
-            lead_sponsor = collab_mod.get("leadSponsor", {}) or {}
-            sponsor_name = lead_sponsor.get("name") or "unknown"
-            sponsor_class = lead_sponsor.get("class") or "unknown"
+            proto = study.get("protocolSection", {}) or {}
+            ident = proto.get("identificationModule", {}) or {}
+            desc = proto.get("descriptionModule", {}) or {}
+            status = proto.get("statusModule", {}) or {}
+            design = proto.get("designModule", {}) or {}
 
-            design_info = design.get("designInfo", {})
-            masking_info = design_info.get("maskingInfo", {})
-            enrollment_info = design.get("enrollmentInfo", {})
-            arms_module = protocol.get("armsInterventionsModule", {})
-            interventions_list = []
-            interventions = arms_module.get("interventions", [])
-            for intervention in interventions:
-                interventions_list.append(
+            # Eligibility
+            elig = proto.get("eligibilityModule", {}) or {}
+            eligibility_criteria = ""
+            crit = elig.get("eligibilityCriteria") or elig.get("criteria")
+            if isinstance(crit, dict):
+                eligibility_criteria = (
+                    crit.get("textBlock") or crit.get("textblock") or ""
+                )
+            elif isinstance(crit, str):
+                eligibility_criteria = crit
+
+            # Sponsor
+            collab = proto.get("sponsorCollaboratorsModule", {}) or {}
+            lead = collab.get("leadSponsor", {}) or {}
+            sponsor = lead.get("name", "unknown")
+            sponsor_class = lead.get("class", "OTHER")
+
+            # Enrollment
+            enroll = design.get("enrollmentInfo", {}) or {}
+            e_type = (enroll.get("type") or "").lower()
+            e_cnt = enroll.get("count", None)
+            planned_enrollment = e_cnt if "anticipated" in e_type else None
+            actual_enrollment = e_cnt if "actual" in e_type else None
+            planned_enrollment = planned_enrollment or e_cnt
+            actual_enrollment = actual_enrollment or e_cnt
+
+            def to_ts(x):
+                try:
+                    return pd.to_datetime(x)
+                except (ValueError, TypeError):
+                    return pd.NaT
+
+            start_str = status.get("startDateStruct", {}).get("date", "")
+            prim_str = status.get("primaryCompletionDateStruct", {}).get("date", "")
+            comp_str = status.get("completionDateStruct", {}).get("date", "")
+
+            start_ts = to_ts(start_str)
+            prim_ts = to_ts(prim_str)
+            comp_ts = to_ts(comp_str)
+
+            planned_duration_m = (
+                ((prim_ts - start_ts).days / 30.0)
+                if not pd.isna(start_ts) and not pd.isna(prim_ts)
+                else None
+            )
+            actual_duration_m = (
+                ((comp_ts - start_ts).days / 30.0)
+                if not pd.isna(start_ts) and not pd.isna(comp_ts)
+                else None
+            )
+
+            # Arm count
+            arms_mod = proto.get("armsInterventionsModule", {}) or {}
+            num_arms = len(arms_mod.get("armGroups", []))
+
+            # DMC
+            oversight = proto.get("oversightModule", {}) or {}
+            has_dmc = int(bool(oversight.get("oversightHasDmc", False)))
+
+            # Multi-country
+            contacts_mod = proto.get("contactsLocationsModule", {}) or {}
+            contacts = contacts_mod.get("locations", []) or []
+            multi_country = int(len(contacts) > 1)
+
+            # Interventions
+            interventions = []
+            for iv in arms_mod.get("interventions", []):
+                interventions.append(
                     {
-                        "name": intervention.get("name", ""),
-                        "type": intervention.get("type", ""),
-                        "description": intervention.get("description", ""),
-                        "mesh_terms": intervention.get("meshTerms", []),
-                        "other_ids": intervention.get("otherIds", []),
+                        "name": iv.get("name", ""),
+                        "type": iv.get("type", ""),
+                        "description": iv.get("description", ""),
+                        "mesh_terms": iv.get("meshTerms", []),
+                        "other_ids": iv.get("otherIds", []),
                     }
                 )
-            interventions_json = json.dumps(interventions_list, ensure_ascii=False)
+            iv_json = json.dumps(interventions, ensure_ascii=False)
+
+            raw_phases = design.get("phases") or []
+            if isinstance(raw_phases, str):
+                phases_str = raw_phases
+            else:
+                phases_str = "|".join(raw_phases)
+
             return {
-                "sponsor": sponsor_name,
+                "sponsor": sponsor,
                 "sponsor_class": sponsor_class,
-                "nct_id": identification.get("nctId", ""),
-                "brief_title": identification.get("briefTitle", ""),
-                "official_title": identification.get("officialTitle", ""),
-                "brief_summary": description.get("briefSummary", ""),
-                "detailed_description": description.get("detailedDescription", ""),
+                "nct_id": ident.get("nctId", ""),
+                "brief_title": ident.get("briefTitle", ""),
+                "official_title": ident.get("officialTitle", ""),
+                "brief_summary": desc.get("briefSummary", ""),
+                "detailed_description": desc.get("detailedDescription", ""),
+                "eligibility_criteria": eligibility_criteria,
                 "overall_status": status.get("overallStatus", ""),
                 "why_stopped": status.get("whyStopped", ""),
-                "start_date": status.get("startDateStruct", {}).get("date", ""),
-                "completion_date": status.get("completionDateStruct", {}).get(
-                    "date", ""
-                ),
-                "primary_completion_date": status.get(
-                    "primaryCompletionDateStruct", {}
-                ).get("date", ""),
+                "start_date": start_str,
+                "primary_completion_date": prim_str,
+                "completion_date": comp_str,
                 "study_type": design.get("studyType", ""),
-                "phases": "|".join(design.get("phases", []))
-                if design.get("phases")
-                else "",
-                "allocation": design_info.get("allocation", ""),
-                "intervention_model": design_info.get("interventionModel", ""),
-                "masking": masking_info.get("masking", ""),
-                "primary_purpose": design_info.get("primaryPurpose", ""),
-                "enrollment_count": enrollment_info.get("count", 0),
-                "enrollment_type": enrollment_info.get("type", ""),
-                "interventions_json": interventions_json,
+                "phases": phases_str,
+                "allocation": design.get("designInfo", {}).get("allocation", ""),
+                "intervention_model": design.get("designInfo", {}).get(
+                    "interventionModel", ""
+                ),
+                "masking": design.get("designInfo", {}).get("masking", ""),
+                "primary_purpose": design.get("designInfo", {}).get(
+                    "primaryPurpose", ""
+                ),
+                "planned_enrollment": planned_enrollment,
+                "actual_enrollment": actual_enrollment,
+                "planned_duration_m": planned_duration_m,
+                "actual_duration_m": actual_duration_m,
+                "num_arms": num_arms,
+                "has_dmc": has_dmc,
+                "multi_country": multi_country,
+                "enrollment_count": enroll.get("count", 0),
+                "enrollment_type": enroll.get("type", ""),
+                "interventions_json": iv_json,
                 "interventions_types": ";".join(
-                    i.get("type", "") for i in interventions_list if i.get("type", "")
+                    i["type"] for i in interventions if i["type"]
                 ),
                 "interventions_names": ";".join(
-                    i.get("name", "") for i in interventions_list if i.get("name", "")
+                    i["name"] for i in interventions if i["name"]
                 ),
             }
+
         except Exception as e:
-            print(f"❌ Extraction error: {e}")
+            ident = (
+                study.get("protocolSection", {})
+                .get("identificationModule", {})
+                .get("nctId", "UNKNOWN")
+            )
+            print(f"❌ Extraction error for NCT {ident}: {e}")
             return None

@@ -1,6 +1,7 @@
 # src/recruitment_fairness/evaluate.py
 
 import argparse
+import json
 import os
 
 import matplotlib.pyplot as plt
@@ -9,6 +10,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import shap
 from catboost import CatBoostClassifier, Pool
+from sklearn.decomposition import PCA
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -28,21 +30,23 @@ from recruitment_fairness.models.fairness_utils import (
 
 def main(args):
     # 1) Load processed splits
-    train = pd.read_csv(os.path.join(args.data_processed, "train.csv"))
-    test = pd.read_csv(os.path.join(args.data_processed, "test.csv"))
+    train = pd.read_csv(os.path.join(args.data_processed, "train.csv"), index_col=0)
+    test = pd.read_csv(os.path.join(args.data_processed, "test.csv"), index_col=0)
 
-    # 2) Structured features
+    # 2) Structured features + get cat indices
     preproc = ClinicalTrialPreprocessor(
         data_dir=args.data_raw,
         processed_dir=args.data_processed,
+        random_state=args.seed,
     )
-    X_tr_struct, _ = preproc.get_structured_features(train)
+    X_tr_struct, cat_idx = preproc.get_structured_features(train)
     X_te_struct, _ = preproc.get_structured_features(test)
 
-    # 3) ClinicalBERT embeddings for train & test
+    # 3) Embed texts with ClinicalBERT
     embedder = ClinicalBERTEmbedder(model_name=args.bert_model)
-    texts_tr = train["brief_summary"].fillna("").astype(str).tolist()
-    texts_te = test["brief_summary"].fillna("").astype(str).tolist()
+    texts_tr = train["combined_text"].fillna("").astype(str).tolist()
+    texts_te = test["combined_text"].fillna("").astype(str).tolist()
+
     X_tr_text = embedder.embed_texts(
         texts_tr, batch_size=args.batch_size, max_length=args.max_length
     )
@@ -50,164 +54,141 @@ def main(args):
         texts_te, batch_size=args.batch_size, max_length=args.max_length
     )
 
-    # 4) Assemble DataFrames & align columns
-    text_cols = [f"text_{i}" for i in range(X_tr_text.shape[1])]
-    df_tr_text = pd.DataFrame(X_tr_text, columns=text_cols, index=X_tr_struct.index)
-    df_te_text = pd.DataFrame(X_te_text, columns=text_cols, index=X_te_struct.index)
+    # 4) PCA → reduce to 50 dims
+    pca = PCA(n_components=50, random_state=args.seed)
+    X_tr_txt = pca.fit_transform(X_tr_text)
+    X_te_txt = pca.transform(X_te_text)
 
-    X_tr_df = pd.concat([X_tr_struct, df_tr_text], axis=1)
-    X_te_df = pd.concat([X_te_struct, df_te_text], axis=1)
+    # 5) Assemble full feature frames
+    text_cols = [f"text_{i}" for i in range(X_tr_txt.shape[1])]
+    df_tr_text = pd.DataFrame(X_tr_txt, index=X_tr_struct.index, columns=text_cols)
+    df_te_text = pd.DataFrame(X_te_txt, index=X_te_struct.index, columns=text_cols)
 
-    # Align test to train columns
-    X_te_df = X_te_df.reindex(columns=X_tr_df.columns, fill_value=0)
+    df_tr = pd.concat([X_tr_struct, df_tr_text], axis=1)
+    df_te = pd.concat([X_te_struct, df_te_text], axis=1)
+    df_te = df_te.reindex(columns=df_tr.columns, fill_value=0)
 
-    y_tr = train["is_success"].to_numpy()
-    y_test = test["is_success"].to_numpy()
+    # 6) True labels
+    y_te_rec = test["y_recruit"].to_numpy()
+    y_te_out = test["y_outcome"].to_numpy()
 
-    # 5) Load trained models
-    recruit_model = CatBoostClassifier()
-    recruit_model.load_model(os.path.join(args.model_dir, "recruitment.cbm"))
-
+    # 7) Load models
+    rec_model = CatBoostClassifier()
+    rec_model.load_model(os.path.join(args.model_dir, "recruitment.cbm"))
     fair_model = CatBoostClassifier()
     fair_model.load_model(os.path.join(args.model_dir, "fair_outcome.cbm"))
 
-    # 6) Predict RecruitmentNet
-    train_pool = Pool(data=X_tr_df, label=y_tr, cat_features=["sponsor_class"])
-    test_pool = Pool(data=X_te_df, label=y_test, cat_features=["sponsor_class"])
-    y_pred_rec = recruit_model.predict_proba(test_pool)[:, 1]
+    # 8) RecruitmentNet predictions & metrics
+    pool_te = Pool(data=df_te, cat_features=cat_idx)
+    y_pred_rec = rec_model.predict_proba(pool_te)[:, 1]
 
-    # 7) RecruitmentNet metrics
-    auc_rec = roc_auc_score(y_test, y_pred_rec)
-    f1_rec = f1_score(y_test, y_pred_rec > 0.5)
-    acc_rec = accuracy_score(y_test, y_pred_rec > 0.5)
-    cm_rec = confusion_matrix(y_test, y_pred_rec > 0.5)
+    auc_r = roc_auc_score(y_te_rec, y_pred_rec)
+    f1_r = f1_score(y_te_rec, y_pred_rec > 0.5)
+    acc_r = accuracy_score(y_te_rec, y_pred_rec > 0.5)
+    cm_r = confusion_matrix(y_te_rec, y_pred_rec > 0.5)
 
-    print("\n=== RecruitmentNet Performance ===")
-    print(f"AUC: {auc_rec:.3f} | F1: {f1_rec:.3f} | Acc: {acc_rec:.3f}")
-    print("Confusion Matrix:\n", cm_rec)
-    print(classification_report(y_test, y_pred_rec > 0.5))
+    dp_r = demographic_parity_difference(
+        y_te_rec, y_pred_rec > 0.5, test["sponsor_class"].to_numpy()
+    )
+    eo_r = equal_opportunity_difference(
+        y_te_rec, y_pred_rec > 0.5, test["sponsor_class"].to_numpy()
+    )
 
-    # 8) Build second-stage features (add recruit_score)
-    recruit_score_tr = recruit_model.predict_proba(train_pool)[:, 1].reshape(-1, 1)
-    recruit_score_te = y_pred_rec.reshape(-1, 1)
+    print("\n=== RecruitmentNet ===")
+    print(f"AUC   {auc_r:.3f} | F1  {f1_r:.3f} | Acc {acc_r:.3f}")
+    print("Confusion Matrix:\n", cm_r)
+    print(classification_report(y_te_rec, y_pred_rec > 0.5))
+    print(f"Fairness ΔP={dp_r:.3f}, ΔTPR={eo_r:.3f}")
 
+    # 9) Build 2nd-stage feature frames
+    rec_score_te = y_pred_rec.reshape(-1, 1)
     df2_tr = pd.concat(
         [
-            X_tr_df,
+            df_tr,
             pd.DataFrame(
-                recruit_score_tr, columns=["recruit_score"], index=X_tr_df.index
+                rec_model.predict_proba(Pool(data=df_tr, cat_features=cat_idx))[
+                    :, 1
+                ].reshape(-1, 1),
+                index=df_tr.index,
+                columns=["recruit_score"],
             ),
         ],
         axis=1,
     )
     df2_te = pd.concat(
         [
-            X_te_df,
-            pd.DataFrame(
-                recruit_score_te, columns=["recruit_score"], index=X_te_df.index
-            ),
+            df_te,
+            pd.DataFrame(rec_score_te, index=df_te.index, columns=["recruit_score"]),
         ],
         axis=1,
     )
-    # align test2 to train2
     df2_te = df2_te.reindex(columns=df2_tr.columns, fill_value=0)
 
-    # 9) Predict FairOutcomeNet
-    test2_pool = Pool(data=df2_te, label=y_test, cat_features=["sponsor_class"])
-    y_pred_out = fair_model.predict_proba(test2_pool)[:, 1]
+    # 10) FairOutcomeNet predictions & metrics
+    pool2_te = Pool(data=df2_te, cat_features=cat_idx)
+    y_pred_out = fair_model.predict_proba(pool2_te)[:, 1]
 
-    # 10) FairOutcomeNet metrics
-    auc_out = roc_auc_score(y_test, y_pred_out)
-    f1_out = f1_score(y_test, y_pred_out > 0.5)
-    acc_out = accuracy_score(y_test, y_pred_out > 0.5)
-    cm_out = confusion_matrix(y_test, y_pred_out > 0.5)
+    auc_o = roc_auc_score(y_te_out, y_pred_out)
+    f1_o = f1_score(y_te_out, y_pred_out > 0.5)
+    acc_o = accuracy_score(y_te_out, y_pred_out > 0.5)
+    cm_o = confusion_matrix(y_te_out, y_pred_out > 0.5)
 
-    print("\n=== FairOutcomeNet Performance ===")
-    print(f"AUC: {auc_out:.3f} | F1: {f1_out:.3f} | Acc: {acc_out:.3f}")
-    print("Confusion Matrix:\n", cm_out)
-    print(classification_report(y_test, y_pred_out > 0.5))
+    dp_o = demographic_parity_difference(
+        y_te_out, y_pred_out > 0.5, test["sponsor_class"].to_numpy()
+    )
+    eo_o = equal_opportunity_difference(
+        y_te_out, y_pred_out > 0.5, test["sponsor_class"].to_numpy()
+    )
 
-    # 11) ROC Curves
-    fpr_r, tpr_r, _ = roc_curve(y_test, y_pred_rec)
-    fpr_o, tpr_o, _ = roc_curve(y_test, y_pred_out)
+    print("\n=== FairOutcomeNet ===")
+    print(f"AUC   {auc_o:.3f} | F1  {f1_o:.3f} | Acc {acc_o:.3f}")
+    print("Confusion Matrix:\n", cm_o)
+    print(classification_report(y_te_out, y_pred_out > 0.5))
+    print(f"Fairness ΔP={dp_o:.3f}, ΔTPR={eo_o:.3f}")
+
+    # 11) Save metrics to JSON
+    metrics = {
+        "recruitment": {
+            "auc": auc_r,
+            "f1": f1_r,
+            "accuracy": acc_r,
+            "fairness": {"ΔP": dp_r, "ΔTPR": eo_r},
+        },
+        "outcome": {
+            "auc": auc_o,
+            "f1": f1_o,
+            "accuracy": acc_o,
+            "fairness": {"ΔP": dp_o, "ΔTPR": eo_o},
+        },
+    }
+    with open(os.path.join(args.model_dir, "metrics.json"), "w") as f:
+        json.dump(metrics, f, indent=2)
+
+    # 12) ROC curve
+    fpr_r, tpr_r, _ = roc_curve(y_te_rec, y_pred_rec)
+    fpr_o, tpr_o, _ = roc_curve(y_te_out, y_pred_out)
+
     plt.figure(figsize=(6, 6))
-    plt.plot(fpr_r, tpr_r, label=f"RecruitmentNet (AUC={auc_rec:.2f})")
-    plt.plot(fpr_o, tpr_o, label=f"FairOutcomeNet (AUC={auc_out:.2f})")
+    plt.plot(fpr_r, tpr_r, label=f"Recruit (AUC={auc_r:.2f})")
+    plt.plot(fpr_o, tpr_o, label=f"Outcome (AUC={auc_o:.2f})")
     plt.plot([0, 1], [0, 1], "k--")
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
-    plt.title("ROC Curves")
-    plt.legend()
+    plt.legend(loc="lower right")
     plt.tight_layout()
-    plt.show()
-
-    # 12) Fairness audit
-    sens = test["sponsor_class"].fillna("unknown").to_numpy()
-    dp_r = demographic_parity_difference(y_test, y_pred_rec > 0.5, sens)
-    eo_r = equal_opportunity_difference(y_test, y_pred_rec > 0.5, sens)
-    dp_o = demographic_parity_difference(y_test, y_pred_out > 0.5, sens)
-    eo_o = equal_opportunity_difference(y_test, y_pred_out > 0.5, sens)
-
-    print(f"\nFairness ΔP (Recruit): {dp_r:.3f}, ΔTPR: {eo_r:.3f}")
-    print(f"Fairness ΔP (Outcome): {dp_o:.3f}, ΔTPR: {eo_o:.3f}")
-
-    # ─────────────────────────────────────────────────────────────────
-    # After printing metrics, just BEFORE exiting main()
-    # ─────────────────────────────────────────────────────────────────
-
-    # 0) Ensure output dir exists
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    # ─── 1) Save ROC Curves ──────────────────────────────────────────
-    roc_path = os.path.join(args.output_dir, "roc_curves.png")
-    plt.figure(figsize=(6, 6))
-    plt.plot(fpr_r, tpr_r, label=f"RecruitmentNet (AUC={auc_rec:.2f})")
-    plt.plot(fpr_o, tpr_o, label=f"FairOutcomeNet (AUC={auc_out:.2f})")
-    plt.plot([0, 1], [0, 1], "k--", label="Random")
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title("ROC Curves")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(roc_path, dpi=150, bbox_inches="tight")
+    plt.savefig(os.path.join(args.model_dir, "roc_curve.png"))
     plt.close()
-    print(f"✅ Saved ROC curves to {roc_path}")
 
-    # ─── 2) Save SHAP Summary ───────────────────────────────────────
+    # 13) SHAP summary for FairOutcomeNet
     explainer = shap.TreeExplainer(fair_model)
-    sample_df = df2_te.sample(n=args.shap_samples, random_state=args.seed)
-    sample_pool = Pool(data=sample_df, cat_features=["sponsor_class"])
-    shap_vals = explainer.shap_values(sample_pool)
+    sample = df2_te.sample(n=args.shap_samples, random_state=args.seed)
+    shap_vals = explainer.shap_values(Pool(data=sample, cat_features=cat_idx))
 
-    shap.summary_plot(shap_vals, sample_df, show=False)
-    shap_path = os.path.join(args.output_dir, "shap_summary.png")
-    plt.gcf().set_size_inches(8, 6)
-    plt.savefig(shap_path, dpi=150, bbox_inches="tight")
+    plt.figure(figsize=(8, 6))
+    shap.summary_plot(shap_vals, sample, show=False)
+    plt.tight_layout()
+    plt.savefig(os.path.join(args.model_dir, "shap_summary.png"))
     plt.close()
-    print(f"✅ Saved SHAP summary to {shap_path}")
-
-    # ─── 3) Save two sample SHAP Waterfall Plots ───────────────────
-    # pick first two samples from that same sample_df
-    for i, idx in enumerate(sample_df.index[:2]):
-        # compute SHAP for this single row
-        sv_single = explainer.shap_values(
-            Pool(data=sample_df.loc[[idx]], cat_features=["sponsor_class"])
-        )
-        # build an Explanation object
-        exp = shap.Explanation(
-            values=sv_single[0],
-            base_values=explainer.expected_value,
-            data=sample_df.loc[idx],
-            feature_names=sample_df.columns,
-        )
-        shap.plots.waterfall(exp, max_display=10, show=False)
-        wf_path = os.path.join(args.output_dir, f"shap_waterfall_{idx}.png")
-        plt.gcf().set_size_inches(8, 6)
-        plt.savefig(wf_path, dpi=150, bbox_inches="tight")
-        plt.close()
-        print(f"✅ Saved SHAP waterfall for sample {idx} to {wf_path}")
-
-    # ─────────────────────────────────────────────────────────────────
 
 
 if __name__ == "__main__":
@@ -215,7 +196,6 @@ if __name__ == "__main__":
     p.add_argument("--data_raw", default="data/raw")
     p.add_argument("--data_processed", default="data/processed")
     p.add_argument("--model_dir", default="models")
-    p.add_argument("--output_dir", default="results")  # new
     p.add_argument("--bert_model", default="emilyalsentzer/Bio_ClinicalBERT")
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--max_length", type=int, default=128)

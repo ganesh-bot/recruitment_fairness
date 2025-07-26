@@ -1,0 +1,134 @@
+# tests/test_evaluate_module.py
+
+import argparse
+import os
+
+import numpy as np
+import pandas as pd
+import pytest
+
+import recruitment_fairness.evaluate as eval_module
+from recruitment_fairness.data.clinicalbert_embedder import ClinicalBERTEmbedder
+from recruitment_fairness.data.preprocess import ClinicalTrialPreprocessor
+
+
+# Dummy CatBoostClassifier substitute
+class DummyCatBoost:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def load_model(self, path):
+        self.n_samples = 50
+
+    def predict_proba(self, pool):
+        data = pool.get_data() if hasattr(pool, "get_data") else pool
+        n, m = data.shape
+        return np.vstack([np.full(n, 0.3), np.full(n, 0.7)]).T
+
+
+# Dummy SHAP explainer
+class DummyExplainer:
+    def __init__(self, model):
+        pass
+
+    def shap_values(self, pool):
+        data = pool.get_data() if hasattr(pool, "get_data") else pool
+        n, m = data.shape
+        return np.zeros((n, m))
+
+
+@pytest.fixture(autouse=True)
+def stub_out_dependencies(monkeypatch):
+    # stub ClinicalBERTEmbedder to avoid HF
+    monkeypatch.setattr(
+        ClinicalBERTEmbedder, "__init__", lambda self, model_name=None: None
+    )
+    monkeypatch.setattr(
+        ClinicalBERTEmbedder,
+        "embed_texts",
+        lambda self, texts, batch_size=None, max_length=None: np.zeros((len(texts), 8)),
+    )
+
+    # stub CatBoostClassifier in evaluate
+    import catboost
+
+    monkeypatch.setattr(catboost, "CatBoostClassifier", DummyCatBoost)
+
+    # stub SHAP
+    import shap
+
+    monkeypatch.setattr(shap, "TreeExplainer", lambda model: DummyExplainer(model))
+    monkeypatch.setattr(shap, "summary_plot", lambda *args, **kwargs: None)
+
+    yield
+
+
+def make_processed_splits(proc_dir: str, n=50):
+    """Create fake train.csv and test.csv so evaluate can load them."""
+    df = pd.DataFrame(
+        {
+            "overall_status": [
+                "Completed" if i % 2 == 0 else "Terminated" for i in range(n)
+            ],
+            "sponsor_class": ["INDUSTRY"] * n,
+            "phases": ["phase1"] * n,
+            "interventions_names": ["drugA"] * n,
+            "brief_summary": ["text"] * n,
+            "start_date": ["2020-06-01"] * n,
+            "enrollment_count": [100] * n,
+            "planned_enrollment": [100] * n,
+            "actual_enrollment": [100 if i % 2 == 0 else 50 for i in range(n)],
+            "planned_duration_m": [12] * n,
+            "actual_duration_m": [12 if i % 2 == 0 else 20 for i in range(n)],
+            "num_arms": [1] * n,
+            "has_dmc": [0] * n,
+            "multi_country": [0] * n,
+            # **new** pandemic flag column
+            "pandemic": [1] * n,
+            # labels
+            "y_recruit": [1 if i % 2 == 0 else 0 for i in range(n)],
+            "y_outcome": [1 if i % 2 == 0 else 0 for i in range(n)],
+        }
+    )
+    # 80/20 split
+    split = int(0.8 * n)
+    df.iloc[:split].to_csv(os.path.join(proc_dir, "train.csv"), index=False)
+    df.iloc[split:].to_csv(os.path.join(proc_dir, "test.csv"), index=False)
+
+
+def test_evaluate_runs_and_outputs(tmp_path, capsys):
+    # setup directories
+    raw_dir = tmp_path / "raw"
+    proc_dir = tmp_path / "processed"
+    model_dir = tmp_path / "models"
+    raw_dir.mkdir()
+    proc_dir.mkdir()
+    model_dir.mkdir()
+
+    # write fake splits with pandemic present
+    make_processed_splits(str(proc_dir), n=50)
+
+    # touch dummy models
+    open(model_dir / "recruitment.cbm", "w").close()
+    open(model_dir / "fair_outcome.cbm", "w").close()
+
+    # build args
+    args = argparse.Namespace(
+        data_raw=str(raw_dir),
+        data_processed=str(proc_dir),
+        model_dir=str(model_dir),
+        bert_model="fake/model",
+        batch_size=8,
+        max_length=64,
+        shap_samples=10,
+        seed=0,
+    )
+
+    # run evaluation
+    eval_module.main(args)
+
+    out = capsys.readouterr().out
+    assert "=== RecruitmentNet ===" in out
+    assert "=== FairOutcomeNet ===" in out
+    assert "AUC" in out and "F1" in out and "Acc" in out
+    assert "Fairness ΔP" in out and "ΔTPR" in out

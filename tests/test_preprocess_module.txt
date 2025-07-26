@@ -1,0 +1,112 @@
+# tests/test_preprocess_module.py
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from recruitment_fairness.data.labels import label_outcome, label_recruitment_success
+from recruitment_fairness.data.preprocess import ClinicalTrialPreprocessor
+
+
+def make_dummy_df(n=100):
+    """
+    Create a dummy DataFrame with exactly two outcome classes
+    and two recruitment classes, so stratified 80/10/10 splits work.
+    """
+    df = pd.DataFrame(
+        {
+            # alternate Completed/Terminated to get 50/50 for y_outcome
+            "overall_status": [
+                "Completed" if i % 2 == 0 else "Terminated" for i in range(n)
+            ],
+            # sponsor_class can be constant
+            "sponsor_class": ["INDUSTRY"] * n,
+            # single phase
+            "phases": ["phase1"] * n,
+            # text fields (not used here)
+            "interventions_names": ["drugA"] * n,
+            "brief_summary": ["summary"] * n,
+            # start_date for pandemic flag
+            "start_date": ["2020-06-01"] * n,
+            # enrollment_count (not used for labels but numeric passthrough)
+            "enrollment_count": [100] * n,
+            # fields for recruitment label:
+            # half meet success criteria, half fail
+            "planned_enrollment": [100] * n,
+            "actual_enrollment": [100 if i % 2 == 0 else 50 for i in range(n)],
+            # durations: half meet, half exceed
+            "planned_duration_m": [12] * n,
+            "actual_duration_m": [12 if i % 2 == 0 else 20 for i in range(n)],
+            # other engineered numerics
+            "num_arms": [1] * n,
+            "has_dmc": [0] * n,
+            "multi_country": [0] * n,
+        }
+    )
+    return df
+
+
+def test_label_functions():
+    df = make_dummy_df(10)
+    # outcome: even indices → Completed → 1; odd → Terminated → 0
+    y_out = label_outcome(df)
+    expected_out = np.array([1, 0] * 5, dtype=float)
+    assert np.array_equal(y_out.to_numpy(), expected_out)
+
+    # recruitment: even indices → actual>=0.8*planned & duration<=planned → 1
+    # odd → actual=50<80 → 0
+    y_rec = label_recruitment_success(df)
+    expected_rec = np.array([1, 0] * 5, dtype=float)
+    assert np.array_equal(y_rec.to_numpy(), expected_rec)
+
+
+def test_preprocess_splits_and_columns(tmp_path):
+    df = make_dummy_df(100)
+    # instantiate with a temp processed_dir
+    proc_dir = tmp_path / "proc"
+    preproc = ClinicalTrialPreprocessor(
+        data_dir="not/used",
+        processed_dir=str(proc_dir),
+        random_state=123,
+    )
+
+    # run preprocess
+    train, val, test = preproc.preprocess(df)
+
+    # sizes: 100 → train ~80, val ~10, test ~20
+    total = len(train) + len(val) + len(test)
+    assert total == 100
+
+    # stratified by outcome: ratio of y_outcome should be ~50/50 in each
+    for split in (train, val, test):
+        counts = split["y_outcome"].value_counts(normalize=True).to_dict()
+        # allow a small tolerance due to rounding
+        assert abs(counts[1.0] - 0.5) < 0.2
+        assert abs(counts[0.0] - 0.5) < 0.2
+
+    # check that CSVs were written
+    assert (proc_dir / "train.csv").exists()
+    assert (proc_dir / "val.csv").exists()
+    assert (proc_dir / "test.csv").exists()
+
+    # test get_structured_features
+    X_train, cat_idx = preproc.get_structured_features(train)
+    # phases one-hot should produce at least 'phase_phase1'
+    assert any(c.startswith("phase_phase1") for c in X_train.columns)
+    # sponsor_class column must be present
+    assert "sponsor_class" in X_train.columns
+    # numeric columns should be present
+    for num in [
+        "enrollment_count",
+        "planned_enrollment",
+        "actual_enrollment",
+        "planned_duration_m",
+        "actual_duration_m",
+        "num_arms",
+        "has_dmc",
+        "multi_country",
+        "pandemic",
+    ]:
+        assert num in X_train.columns
+    # cat_idx should point to sponsor_class
+    assert X_train.columns[cat_idx[0]] == "sponsor_class"
