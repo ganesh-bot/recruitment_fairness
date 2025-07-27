@@ -22,6 +22,7 @@ from sklearn.metrics import (
 
 from recruitment_fairness.data.clinicalbert_embedder import ClinicalBERTEmbedder
 from recruitment_fairness.data.preprocess import ClinicalTrialPreprocessor
+from recruitment_fairness.eval.fairness_audit import audit_groups
 from recruitment_fairness.models.fairness_utils import (
     demographic_parity_difference,
     equal_opportunity_difference,
@@ -97,8 +98,22 @@ def main(args):
     print("\n=== RecruitmentNet ===")
     print(f"AUC   {auc_r:.3f} | F1  {f1_r:.3f} | Acc {acc_r:.3f}")
     print("Confusion Matrix:\n", cm_r)
+
     print(classification_report(y_te_rec, y_pred_rec > 0.5))
+
     print(f"Fairness ΔP={dp_r:.3f}, ΔTPR={eo_r:.3f}")
+    for group_col in ["sponsor_class", "region_income_group", "therapeutic_area"]:
+        if group_col in test.columns:
+            fair_report_r = audit_groups(
+                y_true=y_te_rec,
+                y_pred=(y_te_rec > 0.5),
+                group_labels=test[group_col],
+                y_proba=y_te_rec,
+            )
+            print(
+                f"[{group_col}] ΔTPR={fair_report_r['ΔTPR']:.3f}, "
+                "ΔAUC={fair_report_r['ΔAUC']:.3f}, ΔP={fair_report_r['ΔP']:.3f}"
+            )
 
     # 9) Build 2nd-stage feature frames
     rec_score_te = y_pred_rec.reshape(-1, 1)
@@ -144,7 +159,43 @@ def main(args):
     print(f"AUC   {auc_o:.3f} | F1  {f1_o:.3f} | Acc {acc_o:.3f}")
     print("Confusion Matrix:\n", cm_o)
     print(classification_report(y_te_out, y_pred_out > 0.5))
+
     print(f"Fairness ΔP={dp_o:.3f}, ΔTPR={eo_o:.3f}")
+
+    for group_col in ["sponsor_class", "region_income_group", "therapeutic_area"]:
+        if group_col in test.columns:
+            fair_report_o = audit_groups(
+                y_true=y_te_out,  # or y_te_rec
+                y_pred=(y_pred_out > 0.5),
+                group_labels=test[group_col],
+                y_proba=y_pred_out,
+            )
+            print(
+                f"[{group_col}] ΔTPR={fair_report_o['ΔTPR']:.3f}, "
+                "ΔAUC={fair_report_o['ΔAUC']:.3f}, ΔP={fair_report_o['ΔP']:.3f}"
+            )
+
+    with open(os.path.join(args.model_dir, "fairness_recruitment.json"), "w") as f:
+        json.dump(fair_report_r, f, indent=2)
+    with open(os.path.join(args.model_dir, "fairness_outcome.json"), "w") as f:
+        json.dump(fair_report_o, f, indent=2)
+
+    def plot_fairness_metric(metric_dict, title, save_path):
+        groups = list(metric_dict.keys())
+        values = [metric_dict[g] for g in groups]
+        plt.figure(figsize=(8, 4))
+        plt.bar(groups, values)
+        plt.xticks(rotation=45)
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
+
+    plot_fairness_metric(
+        {k: v["P_rate"] for k, v in fair_report_o["per_group"].items()},
+        "FairOutcomeNet P_rate by Therapeutic Area",
+        "results/p_rate_therapeutic_area.png",
+    )
 
     # 11) Save metrics to JSON
     metrics = {

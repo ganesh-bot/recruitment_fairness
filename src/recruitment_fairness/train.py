@@ -27,11 +27,11 @@ def main(args):
     )
     train, val, test = preproc.preprocess(df_raw)
 
-    # -- Optional subsample for quicker prototyping
-    if len(train) > 1000:
-        train = train.sample(1000, random_state=args.seed)
-    if len(val) > 200:
-        val = val.sample(200, random_state=args.seed)
+    # # -- Optional subsample for quicker prototyping
+    # if len(train) > 1000:
+    #     train = train.sample(1000, random_state=args.seed)
+    # if len(val) > 200:
+    #     val = val.sample(200, random_state=args.seed)
 
     # -- 3) Structured features
     X_tr_struct, cat_idx = preproc.get_structured_features(train)
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     p.add_argument("--data_raw", default="data/raw")
     p.add_argument("--data_processed", default="data/processed")
     p.add_argument("--model_dir", default="models")
-    p.add_argument("--max_studies", type=int, default=1500)
+    p.add_argument("--max_studies", type=int, default=4000)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--max_length", type=int, default=128)
     p.add_argument("--iterations", type=int, default=100)
