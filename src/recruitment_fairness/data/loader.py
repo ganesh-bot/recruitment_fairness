@@ -16,7 +16,7 @@ class ClinicalTrialsWebCollector:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def search_trials(self, query_term="", max_studies=5000):
+    def search_trials(self, query_term="", max_studies=10000):
         all_studies, page_token, page_size = [], None, 1000
         pbar = tqdm(total=max_studies, desc=f"Fetching {query_term or 'all'}")
         while len(all_studies) < max_studies:
@@ -133,6 +133,16 @@ class ClinicalTrialsWebCollector:
             contacts = contacts_mod.get("locations", []) or []
             multi_country = int(len(contacts) > 1)
 
+            country = (
+                contacts[0].get("country", "").strip()
+                if contacts and isinstance(contacts[0], dict)
+                else ""
+            )
+
+            conditions_mod = proto.get("conditionsModule", {}) or {}
+            conditions_list = conditions_mod.get("conditions", [])
+            condition_str = conditions_list[0] if conditions_list else ""
+
             # Interventions
             interventions = []
             for iv in arms_mod.get("interventions", []):
@@ -184,6 +194,8 @@ class ClinicalTrialsWebCollector:
                 "num_arms": num_arms,
                 "has_dmc": has_dmc,
                 "multi_country": multi_country,
+                "first_country": country,
+                "condition": condition_str,
                 "enrollment_count": enroll.get("count", 0),
                 "enrollment_type": enroll.get("type", ""),
                 "interventions_json": iv_json,

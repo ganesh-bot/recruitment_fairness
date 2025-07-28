@@ -130,42 +130,75 @@ class ClinicalTrialPreprocessor:
         return train, val, test
 
     def get_structured_features(self, df: pd.DataFrame):
-        # force any blank or missing 'phases' into "unknown"
+        # --- 1. Phase dummies ---
         phase_ser = (
             df["phases"]
-            .fillna("unknown")  # catch NaNs
+            .fillna("unknown")
             .astype(str)
-            .replace("", "unknown")  # catch literal empty strings
+            .replace("", "unknown")
             .str.lower()
         )
-        # now get_dummies will always produce a 'phase_unknown' and never bare 'phase_'
         phases = pd.get_dummies(phase_ser, prefix="phase")
-        # (optional) sort your dummy columns for consistency:
         phases = phases.reindex(sorted(phases.columns), axis=1)
 
-        # keep sponsor_class as single categorical (CatBoost index later)
+        # --- 2. Sponsor class (existing categorical) ---
         sponsor = df["sponsor_class"].astype(str).to_frame("sponsor_class")
 
-        # numeric features — now includes the two new ones
+        # --- 3. Optional fairness groups as new categorical features ---
+        # a) region_income_group from mapping
+        income_map_path = "data/mappings/country_income.csv"
+        if Path(income_map_path).exists():
+            income_df = pd.read_csv(income_map_path)
+            income_dict = dict(zip(income_df["country"], income_df["income_group"]))
+            df["region_income_group"] = (
+                df["first_country"].map(income_dict).fillna("UNKNOWN")
+            )
+        else:
+            df["region_income_group"] = "UNKNOWN"
+
+        # b) therapeutic_area from condition
+        def map_condition_to_area(text):
+            text = str(text).lower()
+            for kw, area in {
+                "cancer": "Oncology",
+                "tumor": "Oncology",
+                "stroke": "Neurology",
+                "heart": "Cardiology",
+                "asthma": "Pulmonology",
+                "diabetes": "Endocrinology",
+                "hiv": "Infectious Disease",
+                "covid": "Infectious Disease",
+                "infection": "Infectious Disease",
+            }.items():
+                if re.search(rf"\b{kw}\b", text):
+                    return area
+            return "Other"
+
+        df["therapeutic_area"] = df["condition"].fillna("").apply(map_condition_to_area)
+
+        region = df["region_income_group"].astype(str).to_frame("region_income_group")
+        therapy = df["therapeutic_area"].astype(str).to_frame("therapeutic_area")
+
+        # --- 4. Numeric features (no change) ---
         numeric_cols = [
-            "enrollment_count",
             "planned_enrollment",
-            "actual_enrollment",
             "planned_duration_m",
-            "actual_duration_m",
             "num_arms",
             "has_dmc",
             "multi_country",
             "pandemic",
-            "enroll_rate",
-            "enroll_ratio",
         ]
         numeric = df[numeric_cols].fillna(0).astype(float)
 
-        # assemble X
-        X = pd.concat([phases, sponsor, numeric], axis=1)
+        # --- 5. Final X matrix ---
+        X = pd.concat([phases, sponsor, region, therapy, numeric], axis=1)
 
-        # find index of the single categorical column
-        cat_idx = [X.columns.get_loc("sponsor_class")]
+        # --- 6. Update categorical index list ---
+        cat_idx = [
+            X.columns.get_loc("sponsor_class"),
+            X.columns.get_loc("region_income_group"),
+            X.columns.get_loc("therapeutic_area"),
+        ]
 
+        print(f"[INFO] Structured input features: {X.columns.tolist()}")
         return X, cat_idx

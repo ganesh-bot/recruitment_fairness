@@ -1,0 +1,132 @@
+{
+  "per_group": {
+    "sponsor_class": {
+      "FED": {
+        "TPR": 0.833,
+        "FPR": 0.0,
+        "AUC": null,
+        "P_rate": 0.833
+      },
+      "INDIV": {
+        "TPR": 1.0,
+        "FPR": 0.0,
+        "AUC": null,
+        "P_rate": 1.0
+      },
+      "INDUSTRY": {
+        "TPR": 0.988,
+        "FPR": 0.765,
+        "AUC": 0.683,
+        "P_rate": 0.967
+      },
+      "NETWORK": {
+        "TPR": 1.0,
+        "FPR": 0.0,
+        "AUC": 1.0,
+        "P_rate": 0.75
+      },
+      "NIH": {
+        "TPR": 0.778,
+        "FPR": 0.0,
+        "AUC": null,
+        "P_rate": 0.778
+      },
+      "OTHER": {
+        "TPR": 0.982,
+        "FPR": 0.478,
+        "AUC": 0.82,
+        "P_rate": 0.898
+      },
+      "OTHER_GOV": {
+        "TPR": 1.0,
+        "FPR": 0.0,
+        "AUC": null,
+        "P_rate": 1.0
+      }
+    },
+    "region_income_group": {
+      "HIGH": {
+        "TPR": 0.97,
+        "FPR": 0.603,
+        "AUC": 0.747,
+        "P_rate": 0.911
+      },
+      "LOW/MIDDLE": {
+        "TPR": 1.0,
+        "FPR": 0.0,
+        "AUC": null,
+        "P_rate": 1.0
+      },
+      "UNKNOWN": {
+        "TPR": 0.99,
+        "FPR": 0.37,
+        "AUC": 0.864,
+        "P_rate": 0.917
+      }
+    },
+    "therapeutic_area": {
+      "Cardiology": {
+        "TPR": 1.0,
+        "FPR": 0.667,
+        "AUC": 0.733,
+        "P_rate": 0.875
+      },
+      "Endocrinology": {
+        "TPR": 1.0,
+        "FPR": 1.0,
+        "AUC": 0.619,
+        "P_rate": 1.0
+      },
+      "Infectious Disease": {
+        "TPR": 1.0,
+        "FPR": 0.4,
+        "AUC": 0.773,
+        "P_rate": 0.85
+      },
+      "Neurology": {
+        "TPR": 1.0,
+        "FPR": 0.0,
+        "AUC": 1.0,
+        "P_rate": 0.667
+      },
+      "Oncology": {
+        "TPR": 0.953,
+        "FPR": 0.5,
+        "AUC": 0.776,
+        "P_rate": 0.868
+      },
+      "Other": {
+        "TPR": 0.979,
+        "FPR": 0.5,
+        "AUC": 0.803,
+        "P_rate": 0.92
+      },
+      "Pulmonology": {
+        "TPR": 1.0,
+        "FPR": 1.0,
+        "AUC": 0.667,
+        "P_rate": 1.0
+      }
+    }
+  },
+  "\u0394TPR": {
+    "sponsor_class": 0.222,
+    "region_income_group": 0.03,
+    "therapeutic_area": 0.047
+  },
+  "\u0394FPR": {
+    "sponsor_class": 0.765,
+    "region_income_group": 0.603,
+    "therapeutic_area": 1.0
+  },
+  "\u0394AUC": {
+    "sponsor_class": 1.0,
+    "region_income_group": 0.864,
+    "therapeutic_area": 0.381
+  },
+  "\u0394P": {
+    "sponsor_class": 0.25,
+    "region_income_group": 0.089,
+    "therapeutic_area": 0.333
+  }
+}
