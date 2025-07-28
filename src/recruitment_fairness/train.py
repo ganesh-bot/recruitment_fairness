@@ -3,8 +3,9 @@
 import argparse
 import os
 
-# import numpy as np
+import numpy as np
 import pandas as pd
+import torch
 from catboost import Pool
 from sklearn.decomposition import PCA
 
@@ -12,6 +13,7 @@ from recruitment_fairness.data.clinicalbert_embedder import ClinicalBERTEmbedder
 from recruitment_fairness.data.loader import ClinicalTrialsWebCollector
 from recruitment_fairness.data.preprocess import ClinicalTrialPreprocessor
 from recruitment_fairness.models.catboost_net import CatBoostNet
+from recruitment_fairness.models.fair_outcome_net import train_fair_outcome_net
 
 
 def main(args):
@@ -89,7 +91,6 @@ def main(args):
     print(f"✅ Saved RecruitmentNet to {rec_path}")
 
     # -- 8) Train FairOutcomeNet (second stage)
-    # **FIX**: call predict_proba on the internal .model
     rec_score_tr = rec_net.model.predict_proba(pool_tr)[:, 1].reshape(-1, 1)
     rec_score_va = rec_net.model.predict_proba(pool_va)[:, 1].reshape(-1, 1)
 
@@ -112,25 +113,50 @@ def main(args):
     y_tr_out = train["y_outcome"].to_numpy()
     y_va_out = val["y_outcome"].to_numpy()
 
-    pool2_tr = Pool(data=df2_tr, label=y_tr_out, cat_features=cat_idx)
-    pool2_va = Pool(data=df2_va, label=y_va_out, cat_features=cat_idx)
+    if args.model_type == "mlp":
+        # One-hot encode categorical columns for PyTorch MLP
+        df2_tr_enc = pd.get_dummies(df2_tr, drop_first=True)
+        df2_va_enc = pd.get_dummies(df2_va, drop_first=True)
 
-    out_net = CatBoostNet(
-        cat_features=cat_idx,
-        iterations=args.iterations,
-        depth=args.depth,
-        learning_rate=args.lr,
-        random_state=args.seed,
-    )
-    out_net.fit(
-        pool2_tr,
-        eval_set=pool2_va,
-        early_stopping_rounds=args.early_stop,
-    )
+        # Align columns across train/val
+        df2_va_enc = df2_va_enc.reindex(columns=df2_tr_enc.columns, fill_value=0)
 
-    out_path = os.path.join(args.model_dir, "fair_outcome.cbm")
-    out_net.model.save_model(out_path)
-    print(f"✅ Saved FairOutcomeNet to {out_path}")
+        X_train = df2_tr_enc.values.astype(np.float32)
+        X_val = df2_va_enc.values.astype(np.float32)
+
+        fair_net = train_fair_outcome_net(
+            X_train,
+            y_tr_out,
+            X_val,
+            y_va_out,
+            input_dim=X_train.shape[1],
+            n_epochs=args.epochs,
+            lr=args.lr,
+        )
+        torch.save(
+            fair_net.state_dict(), os.path.join(args.model_dir, "fair_outcome.pt")
+        )
+        print("✅ Saved FairOutcomeNet (MLP) to fair_outcome.pt")
+    else:
+        pool2_tr = Pool(data=df2_tr, label=y_tr_out, cat_features=cat_idx)
+        pool2_va = Pool(data=df2_va, label=y_va_out, cat_features=cat_idx)
+
+        out_net = CatBoostNet(
+            cat_features=cat_idx,
+            iterations=args.iterations,
+            depth=args.depth,
+            learning_rate=args.lr,
+            random_state=args.seed,
+        )
+        out_net.fit(
+            pool2_tr,
+            eval_set=pool2_va,
+            early_stopping_rounds=args.early_stop,
+        )
+
+        out_path = os.path.join(args.model_dir, "fair_outcome.cbm")
+        out_net.model.save_model(out_path)
+        print(f"✅ Saved FairOutcomeNet (CatBoost) to {out_path}")
 
 
 if __name__ == "__main__":
@@ -138,7 +164,9 @@ if __name__ == "__main__":
     p.add_argument("--data_raw", default="data/raw")
     p.add_argument("--data_processed", default="data/processed")
     p.add_argument("--model_dir", default="models")
-    p.add_argument("--max_studies", type=int, default=10000)
+    p.add_argument("--model_type", choices=["catboost", "mlp"], default="catboost")
+    p.add_argument("--epochs", type=int, default=20)
+    p.add_argument("--max_studies", type=int, default=7000)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--max_length", type=int, default=128)
     p.add_argument("--iterations", type=int, default=100)

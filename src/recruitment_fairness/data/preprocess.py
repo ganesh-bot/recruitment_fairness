@@ -183,12 +183,10 @@ class ClinicalTrialPreprocessor:
         numeric_cols = [
             "planned_enrollment",
             "planned_duration_m",
-            "actual_duration_m",
             "num_arms",
             "has_dmc",
             "multi_country",
             "pandemic",
-            "enroll_rate",
         ]
         numeric = df[numeric_cols].fillna(0).astype(float)
 
@@ -202,4 +200,5 @@ class ClinicalTrialPreprocessor:
             X.columns.get_loc("therapeutic_area"),
         ]
 
+        print(f"[INFO] Structured input features: {X.columns.tolist()}")
         return X, cat_idx
