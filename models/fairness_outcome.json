@@ -1,50 +1,50 @@
 {
   "per_group": {
     "Cardiology": {
-      "TPR": 1.0,
-      "FPR": 1.0,
-      "AUC": 0.286,
-      "P_rate": 1.0
+      "TPR": 0.944,
+      "FPR": 0.75,
+      "AUC": 0.625,
+      "P_rate": 0.909
     },
     "Endocrinology": {
       "TPR": 1.0,
       "FPR": 1.0,
-      "AUC": 1.0,
+      "AUC": 0.561,
       "P_rate": 1.0
     },
     "Infectious Disease": {
       "TPR": 1.0,
-      "FPR": 0.333,
-      "AUC": 0.917,
-      "P_rate": 0.913
+      "FPR": 0.375,
+      "AUC": 0.918,
+      "P_rate": 0.904
     },
     "Neurology": {
       "TPR": 1.0,
-      "FPR": 0.0,
-      "AUC": 1.0,
-      "P_rate": 0.75
+      "FPR": 0.5,
+      "AUC": 0.667,
+      "P_rate": 0.929
     },
     "Oncology": {
-      "TPR": 1.0,
-      "FPR": 0.364,
-      "AUC": 0.953,
-      "P_rate": 0.841
+      "TPR": 0.986,
+      "FPR": 0.64,
+      "AUC": 0.786,
+      "P_rate": 0.898
     },
     "Other": {
-      "TPR": 0.994,
-      "FPR": 0.553,
-      "AUC": 0.848,
-      "P_rate": 0.939
+      "TPR": 0.987,
+      "FPR": 0.555,
+      "AUC": 0.841,
+      "P_rate": 0.935
     },
     "Pulmonology": {
       "TPR": 1.0,
-      "FPR": 1.0,
+      "FPR": 0.5,
       "AUC": 1.0,
-      "P_rate": 1.0
+      "P_rate": 0.889
     }
   },
-  "\u0394TPR": 0.006,
-  "\u0394FPR": 1.0,
-  "\u0394AUC": 0.714,
-  "\u0394P": 0.25
+  "\u0394TPR": 0.056,
+  "\u0394FPR": 0.625,
+  "\u0394AUC": 0.439,
+  "\u0394P": 0.111
 }

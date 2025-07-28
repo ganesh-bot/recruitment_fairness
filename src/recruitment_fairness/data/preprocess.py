@@ -181,9 +181,7 @@ class ClinicalTrialPreprocessor:
 
         # --- 4. Numeric features (no change) ---
         numeric_cols = [
-            "enrollment_count",
             "planned_enrollment",
-            "actual_enrollment",
             "planned_duration_m",
             "actual_duration_m",
             "num_arms",
@@ -191,7 +189,6 @@ class ClinicalTrialPreprocessor:
             "multi_country",
             "pandemic",
             "enroll_rate",
-            "enroll_ratio",
         ]
         numeric = df[numeric_cols].fillna(0).astype(float)
 

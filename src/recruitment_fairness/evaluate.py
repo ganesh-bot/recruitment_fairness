@@ -112,7 +112,7 @@ def main(args):
             )
             print(
                 f"[{group_col}] ΔTPR={fair_report_r['ΔTPR']:.3f}, "
-                "ΔAUC={fair_report_r['ΔAUC']:.3f}, ΔP={fair_report_r['ΔP']:.3f}"
+                f"ΔAUC={fair_report_r['ΔAUC']:.3f}, ΔP={fair_report_r['ΔP']:.3f}"
             )
 
     # 9) Build 2nd-stage feature frames
@@ -172,7 +172,7 @@ def main(args):
             )
             print(
                 f"[{group_col}] ΔTPR={fair_report_o['ΔTPR']:.3f}, "
-                "ΔAUC={fair_report_o['ΔAUC']:.3f}, ΔP={fair_report_o['ΔP']:.3f}"
+                f"ΔAUC={fair_report_o['ΔAUC']:.3f}, ΔP={fair_report_o['ΔP']:.3f}"
             )
 
     with open(os.path.join(args.model_dir, "fairness_recruitment.json"), "w") as f:

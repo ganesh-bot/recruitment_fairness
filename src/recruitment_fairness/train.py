@@ -138,7 +138,7 @@ if __name__ == "__main__":
     p.add_argument("--data_raw", default="data/raw")
     p.add_argument("--data_processed", default="data/processed")
     p.add_argument("--model_dir", default="models")
-    p.add_argument("--max_studies", type=int, default=4000)
+    p.add_argument("--max_studies", type=int, default=10000)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--max_length", type=int, default=128)
     p.add_argument("--iterations", type=int, default=100)
