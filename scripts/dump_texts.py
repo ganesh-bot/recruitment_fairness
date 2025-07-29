@@ -1,5 +1,6 @@
-import pandas as pd
 import os
+
+import pandas as pd
 
 # 1. Load your test split
 df_test = pd.read_csv("data/processed/test.csv", index_col=0)

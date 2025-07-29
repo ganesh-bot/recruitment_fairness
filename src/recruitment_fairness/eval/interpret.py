@@ -1,9 +1,10 @@
 import os
+from typing import List, Optional  # Callable,
+
+import matplotlib.pyplot as plt
 import numpy as np
 import shap
-import matplotlib.pyplot as plt
 import torch
-from typing import List, Optional, Callable
 from transformers import PreTrainedTokenizer
 
 
@@ -25,19 +26,30 @@ def waterfall_plot(
     masker = shap.maskers.Independent(X_numeric)
     if isinstance(model, torch.nn.Module):
         model.eval()
+
         def predict_fn(data):
             arr = np.asarray(data, dtype=np.float32)
             tensor = torch.from_numpy(arr)
-            with torch.no_grad(): outputs = model(tensor)
-            if isinstance(outputs, torch.Tensor): out = outputs
-            elif isinstance(outputs, (list, tuple)): out = outputs[0]
-            else: return np.array(outputs)
-            if out.dim() == 2 and out.size(1) == 2: probs = torch.softmax(out, dim=1)[:,1]
-            else: probs = torch.sigmoid(out).squeeze()
+            with torch.no_grad():
+                outputs = model(tensor)
+            if isinstance(outputs, torch.Tensor):
+                out = outputs
+            elif isinstance(outputs, (list, tuple)):
+                out = outputs[0]
+            else:
+                return np.array(outputs)
+            if out.dim() == 2 and out.size(1) == 2:
+                probs = torch.softmax(out, dim=1)[:, 1]
+            else:
+                probs = torch.sigmoid(out).squeeze()
             return probs.cpu().numpy()
-    elif hasattr(model,"predict_proba"): predict_fn = lambda d: model.predict_proba(d)[:,1]
-    elif hasattr(model,"predict"): predict_fn = model.predict
-    else: raise ValueError("Model must implement predict/prob or be nn.Module.")
+
+    elif hasattr(model, "predict_proba"):
+        predict_fn = lambda d: model.predict_proba(d)[:, 1]
+    elif hasattr(model, "predict"):
+        predict_fn = model.predict
+    else:
+        raise ValueError("Model must implement predict/prob or be nn.Module.")
     expl = shap.Explainer(predict_fn, masker, feature_names=feature_names)
     shap_values = expl(X_numeric)
     instance_sv = shap_values[idx]
@@ -53,30 +65,41 @@ def _merge_subwords(tokens: List[str], values: np.ndarray):
     words, word_vals = [], []
     buf_tok, buf_val = tokens[0], values[0]
     for tok, val in zip(tokens[1:], values[1:]):
-        if tok.startswith("##"): buf_tok += tok[2:]; buf_val += val
-        else: words.append(buf_tok); word_vals.append(buf_val); buf_tok, buf_val = tok, val
-    words.append(buf_tok); word_vals.append(buf_val)
+        if tok.startswith("##"):
+            buf_tok += tok[2:]
+            buf_val += val
+        else:
+            words.append(buf_tok)
+            word_vals.append(buf_val)
+            buf_tok, buf_val = tok, val
+    words.append(buf_tok)
+    word_vals.append(buf_val)
     return words, np.array(word_vals)
 
 
 def highlight_phrases(
-    texts: List[str], shap_values: np.ndarray,
-    tokenizer: PreTrainedTokenizer, top_k: int = 5, window: int = 5,
+    texts: List[str],
+    shap_values: np.ndarray,
+    tokenizer: PreTrainedTokenizer,
+    top_k: int = 5,
+    window: int = 5,
 ) -> List[str]:
     highlighted_texts = []
     for text, sv in zip(texts, shap_values):
         subtoks = tokenizer.tokenize(text)
         if len(subtoks) != len(sv):
-            min_len = min(len(subtoks), len(sv)); subtoks, sv = subtoks[:min_len], sv[:min_len]
+            min_len = min(len(subtoks), len(sv))
+            subtoks, sv = subtoks[:min_len], sv[:min_len]
         words, vals = _merge_subwords(subtoks, sv)
         top_inds = np.argsort(np.abs(vals))[-top_k:]
         snippets = []
         for idx in sorted(top_inds):
-            start = max(0, idx-window); end = min(len(words), idx+window+1)
+            start = max(0, idx - window)
+            end = min(len(words), idx + window + 1)
             parts = []
             for i in range(start, end):
                 w = words[i]
-                parts.append(f"**{w}**" if i==idx else w)
+                parts.append(f"**{w}**" if i == idx else w)
             snippets.append("..." + " ".join(parts) + "...")
         highlighted_texts.append("\n".join(snippets))
     return highlighted_texts

@@ -1,8 +1,10 @@
 #!/usr/bin/env python
-import torch
+import os
+
 import numpy as np
 import shap
-import os
+import torch
+
 from recruitment_fairness.models.fair_outcome_net import FairOutcomeNet
 
 # 1) Load your test features
@@ -21,11 +23,13 @@ else:
     base_model = ckpt
 base_model.eval()
 
+
 # 3) Wrap model to output probabilities (single column)
 class ProbModel(torch.nn.Module):
     def __init__(self, base):
         super().__init__()
         self.base = base
+
     def forward(self, x):
         logits = self.base(x)
         if isinstance(logits, torch.Tensor):
@@ -37,13 +41,14 @@ class ProbModel(torch.nn.Module):
             return torch.tensor(logits)
         return probs.unsqueeze(-1)
 
+
 prob_model = ProbModel(base_model)
 prob_model.eval()
 
 # 4) Prepare background and input tensors
 bg_idxs = np.random.choice(len(X), size=min(100, len(X)), replace=False)
 background = torch.from_numpy(X[bg_idxs].astype(np.float32))
-X_tensor   = torch.from_numpy(X.astype(np.float32))
+X_tensor = torch.from_numpy(X.astype(np.float32))
 
 # 5) Build DeepExplainer on probability model
 explainer = shap.DeepExplainer(prob_model, background)

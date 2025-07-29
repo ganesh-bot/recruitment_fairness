@@ -1,24 +1,27 @@
 #!/usr/bin/env python
 import os
+
 import numpy as np
 import shap
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 # 1) Load your pretrained (or fine-tuned) checkpoint
-#    If you haven’t fine-tuned a head, this will warn you—and SHAP on a random head isn’t very meaningful.
+#    If you haven’t fine-tuned a head,
+#  this will warn you—and SHAP on a random head isn’t very meaningful.
 # MODEL_ID = "emilyalsentzer/Bio_ClinicalBERT"
 MODEL_ID = "models/text_classifier"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model     = AutoModelForSequenceClassification.from_pretrained(
+model = AutoModelForSequenceClassification.from_pretrained(
     MODEL_ID,
-    num_labels=2,                # adjust if you have more labels
+    num_labels=2,  # adjust if you have more labels
 )
 model.eval()
 
 # 2) Read in your newline-delimited texts
 with open("data/test_texts.txt", encoding="utf-8") as f:
     texts = [line.strip() for line in f]
+
 
 # 3) Define a predict function for SHAP
 def predict_fn(texts_batch):
@@ -33,7 +36,7 @@ def predict_fn(texts_batch):
         texts_batch,
         padding=True,
         truncation=True,
-        max_length=512,   # typically 512
+        max_length=512,  # typically 512
         return_tensors="pt",
     )
     with torch.no_grad():
@@ -42,8 +45,9 @@ def predict_fn(texts_batch):
     probs = torch.softmax(outputs.logits, dim=1)[:, 1].cpu().numpy()
     return probs
 
+
 # 4) Build the SHAP Text masker + explainer
-masker    = shap.maskers.Text(tokenizer)
+masker = shap.maskers.Text(tokenizer)
 explainer = shap.Explainer(predict_fn, masker)
 
 # 5) Explain all texts (you can lower max_evals for speed)

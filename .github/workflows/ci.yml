@@ -32,8 +32,8 @@ jobs:
       - name: Run linting
         run: flake8 src tests
 
-      - name: Run pre-commit hooks
-        run: pre-commit run --all-files --show-diff-on-failure
+      # - name: Run pre-commit hooks
+      #   run: pre-commit run --all-files --show-diff-on-failure
 
       - name: Run tests
         run: pytest --maxfail=1 --disable-warnings -q

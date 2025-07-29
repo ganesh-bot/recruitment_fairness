@@ -1,13 +1,19 @@
 #!/usr/bin/env python
 import argparse
 import json
-import numpy as np
-from transformers import AutoTokenizer
-from recruitment_fairness.eval.interpret import waterfall_plot, highlight_phrases, summary_plot
-import torch
-import pickle
 import os
+import pickle
 import random
+
+import numpy as np
+import torch
+from transformers import AutoTokenizer
+
+from recruitment_fairness.eval.interpret import (
+    highlight_phrases,
+    summary_plot,
+    waterfall_plot,
+)
 
 
 def main():
@@ -16,30 +22,51 @@ def main():
 
     # Waterfall subcommand
     w = sub.add_parser("waterfall")
-    w.add_argument("--model",    required=True, help="Path to model file (.pt or pickle)")
-    w.add_argument("--X",        required=True, help="Path to X_test.npy")
+    w.add_argument("--model", required=True, help="Path to model file (.pt or pickle)")
+    w.add_argument("--X", required=True, help="Path to X_test.npy")
     w.add_argument("--features", required=True, help="Path to feature_names.json")
-    w.add_argument("--idx",      type=int, default=0, help="Index of instance to explain")
-    w.add_argument("--out",      default=None, help="Path to save waterfall plot PNG")
+    w.add_argument("--idx", type=int, default=0, help="Index of instance to explain")
+    w.add_argument("--out", default=None, help="Path to save waterfall plot PNG")
 
     # Highlight subcommand
     h = sub.add_parser("highlight")
-    h.add_argument("--texts",       required=True, help="Path to newline-delimited UTF-8 text file")
-    h.add_argument("--svs",         required=True, help="Path to SHAP values .npy file")
-    h.add_argument("--tokenizer",   default="bert-base-uncased", help="HuggingFace tokenizer name or local dir")
-    h.add_argument("--top_k",       type=int, default=5, help="Number of tokens to highlight")
-    h.add_argument("--window",      type=int, default=5, help="Number of context words around highlighted term")
-    h.add_argument("--sample_size", type=int, default=None, help="Number of examples to sample; default is all")
-    h.add_argument("--out",         help="Path to write highlight snippets to (UTF-8). If omitted, prints to stdout")
+    h.add_argument(
+        "--texts", required=True, help="Path to newline-delimited UTF-8 text file"
+    )
+    h.add_argument("--svs", required=True, help="Path to SHAP values .npy file")
+    h.add_argument(
+        "--tokenizer",
+        default="bert-base-uncased",
+        help="HuggingFace tokenizer name or local dir",
+    )
+    h.add_argument("--top_k", type=int, default=5, help="Number of tokens to highlight")
+    h.add_argument(
+        "--window",
+        type=int,
+        default=5,
+        help="Number of context words around highlighted term",
+    )
+    h.add_argument(
+        "--sample_size",
+        type=int,
+        default=None,
+        help="Number of examples to sample; default is all",
+    )
+    h.add_argument(
+        "--out",
+        help="Path to write highlight snippets to (UTF-8).If omitted, printto stdout",
+    )
 
     # Summary subcommand
     s = sub.add_parser("summary")
-    s.add_argument("--X",          required=True, help="Path to X_test.npy")
-    s.add_argument("--features",   required=True, help="Path to feature_names.json")
-    s.add_argument("--svs",        help="Optional: precomputed SHAP .npy file")
-    s.add_argument("--model",      help="Optional: model checkpoint for recompute")
-    s.add_argument("--out",        help="Path to save summary plot PNG")
-    s.add_argument("--max_display",type=int, default=20, help="How many features to show")
+    s.add_argument("--X", required=True, help="Path to X_test.npy")
+    s.add_argument("--features", required=True, help="Path to feature_names.json")
+    s.add_argument("--svs", help="Optional: precomputed SHAP .npy file")
+    s.add_argument("--model", help="Optional: model checkpoint for recompute")
+    s.add_argument("--out", help="Path to save summary plot PNG")
+    s.add_argument(
+        "--max_display", type=int, default=20, help="How many features to show"
+    )
 
     args = parser.parse_args()
 
@@ -48,14 +75,25 @@ def main():
         if args.model.endswith(".pt"):
             loaded = torch.load(args.model, map_location="cpu")
             if isinstance(loaded, dict) and "state_dict" in loaded:
-                from recruitment_fairness.models.fair_outcome_net import FairOutcomeNet, FairOutcomeAdvNet
+                from recruitment_fairness.models.fair_outcome_net import (
+                    FairOutcomeAdvNet,
+                    FairOutcomeNet,
+                )
+
                 ckpt = loaded
                 net_cls = FairOutcomeAdvNet if "n_groups" in ckpt else FairOutcomeNet
                 model = net_cls(
                     input_dim=ckpt.get("input_dim"),
-                    hidden_dim=ckpt.get("hidden_dim",128),
-                    dropout=ckpt.get("dropout",0.2),
-                    **({} if net_cls is FairOutcomeNet else {"n_groups": ckpt.get("n_groups"), "lambda_adv": ckpt.get("lambda_adv",0.1)})
+                    hidden_dim=ckpt.get("hidden_dim", 128),
+                    dropout=ckpt.get("dropout", 0.2),
+                    **(
+                        {}
+                        if net_cls is FairOutcomeNet
+                        else {
+                            "n_groups": ckpt.get("n_groups"),
+                            "lambda_adv": ckpt.get("lambda_adv", 0.1),
+                        }
+                    ),
                 )
                 model.load_state_dict(ckpt["state_dict"])
                 model.eval()
@@ -118,14 +156,27 @@ def main():
             if args.model.endswith(".pt"):
                 loaded = torch.load(args.model, map_location="cpu")
                 if isinstance(loaded, dict) and "state_dict" in loaded:
-                    from recruitment_fairness.models.fair_outcome_net import FairOutcomeNet, FairOutcomeAdvNet
+                    from recruitment_fairness.models.fair_outcome_net import (
+                        FairOutcomeAdvNet,
+                        FairOutcomeNet,
+                    )
+
                     ckpt = loaded
-                    net_cls = FairOutcomeAdvNet if "n_groups" in ckpt else FairOutcomeNet
+                    net_cls = (
+                        FairOutcomeAdvNet if "n_groups" in ckpt else FairOutcomeNet
+                    )
                     model = net_cls(
                         input_dim=ckpt.get("input_dim"),
-                        hidden_dim=ckpt.get("hidden_dim",128),
-                        dropout=ckpt.get("dropout",0.2),
-                        **({} if net_cls is FairOutcomeNet else {"n_groups": ckpt.get("n.groups"), "lambda_adv": ckpt.get("lambda_adv",0.1)})
+                        hidden_dim=ckpt.get("hidden_dim", 128),
+                        dropout=ckpt.get("dropout", 0.2),
+                        **(
+                            {}
+                            if net_cls is FairOutcomeNet
+                            else {
+                                "n_groups": ckpt.get("n.groups"),
+                                "lambda_adv": ckpt.get("lambda_adv", 0.1),
+                            }
+                        ),
                     )
                     model.load_state_dict(ckpt["state.dict"])
                     model.eval()
@@ -151,6 +202,7 @@ def main():
                 else:
                     probs = torch.sigmoid(out).squeeze()
                 return probs.cpu().numpy()
+
             shap_vals = None
 
         summary_plot(
@@ -162,6 +214,7 @@ def main():
         )
         if args.out:
             print(f"✅ Summary plot saved to {args.out}")
+
 
 if __name__ == "__main__":
     main()
