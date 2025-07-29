@@ -1,1 +1,4 @@
+# ignore all trained models, data dumps, and reports
+models/
 data/
+reports/
