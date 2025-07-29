@@ -1,4 +1,7 @@
 # ignore all trained models, data dumps, and reports
-models/
+.venv/
 data/
-reports/
+models/
+wandb/
+.ipynb_checkpoints/
+__pycache__/
