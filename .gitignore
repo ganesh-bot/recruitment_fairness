@@ -1,7 +1,19 @@
-# ignore all trained models, data dumps, and reports
+# Python
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Envs
 .venv/
-data/
+env/
+*.env
+
+# Models & logs
 models/
 wandb/
-.ipynb_checkpoints/
-__pycache__/
+lightning_logs/
+
+# VSCode
+.vscode/
