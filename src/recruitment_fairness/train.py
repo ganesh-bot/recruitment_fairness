@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 from catboost import Pool
 from sklearn.decomposition import PCA
+from torch.utils.data import Dataset
 
 from recruitment_fairness.data.clinicalbert_embedder import ClinicalBERTEmbedder
 from recruitment_fairness.data.loader import ClinicalTrialsWebCollector
@@ -211,6 +212,98 @@ def main(args):
             )
             print(f"✅ Saved FairOutcomeNet(MLP) to {out_path}")
 
+    if args.train_text_model:
+        from transformers import (
+            AutoModelForSequenceClassification,
+            AutoTokenizer,
+            Trainer,
+            TrainingArguments,
+        )
+
+        # 1) Dataset helper
+        class TextDataset(Dataset):
+            def __init__(self, encodings, labels):
+                self.encodings = encodings
+                self.labels = labels
+
+            def __len__(self):
+                return len(self.labels)
+
+            def __getitem__(self, idx):
+                item = {}
+                for k, v in self.encodings.items():
+                    # avoid re-tensorizing an existing Tensor
+                    item[k] = (
+                        v[idx] if isinstance(v, torch.Tensor) else torch.tensor(v[idx])
+                    )
+                item["labels"] = torch.tensor(self.labels[idx])
+                return item
+
+        # 2) Load tokenizer & model, then freeze BERT body
+        tokenizer = AutoTokenizer.from_pretrained(args.bert_model)
+        text_model = AutoModelForSequenceClassification.from_pretrained(
+            args.bert_model, num_labels=2
+        )
+        # freeze all except classifier head
+        for name, param in text_model.named_parameters():
+            if not name.startswith("classifier."):
+                param.requires_grad = False
+        text_model.train()
+
+        # 3) Prepare texts + labels
+        train_texts = train["combined_text"].fillna("").astype(str).tolist()
+        val_texts = val["combined_text"].fillna("").astype(str).tolist()
+        train_labels = train["y_outcome"].fillna(0).astype(int).tolist()
+        val_labels = val["y_outcome"].fillna(0).astype(int).tolist()
+        # 4) Tokenize with shorter max_length
+        train_enc = tokenizer(
+            train_texts,
+            padding=True,
+            truncation=True,
+            max_length=256,
+            return_tensors="pt",
+        )
+        val_enc = tokenizer(
+            val_texts,
+            padding=True,
+            truncation=True,
+            max_length=256,
+            return_tensors="pt",
+        )
+
+        train_ds = TextDataset(train_enc, train_labels)
+        val_ds = TextDataset(val_enc, val_labels)
+
+        # 5) Trainer args: tiny batch, grad accumulation, fp16
+        training_args = TrainingArguments(
+            output_dir=args.text_output_dir,
+            num_train_epochs=3,
+            per_device_train_batch_size=2,
+            per_device_eval_batch_size=2,
+            gradient_accumulation_steps=4,
+            fp16=True,
+            do_train=True,
+            do_eval=True,
+            save_strategy="epoch",
+            dataloader_pin_memory=False,
+        )
+
+        trainer = Trainer(
+            model=text_model,
+            args=training_args,
+            train_dataset=train_ds,
+            eval_dataset=val_ds,
+        )
+
+        # 6) Fine-tune
+        trainer.train()
+
+        # 7) Save classifier + tokenizer
+        os.makedirs(args.text_output_dir, exist_ok=True)
+        trainer.save_model(args.text_output_dir)
+        tokenizer.save_pretrained(args.text_output_dir)
+        print(f"✅ Saved text classifier to {args.text_output_dir}")
+
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
@@ -239,13 +332,24 @@ if __name__ == "__main__":
     )
     p.add_argument("--hidden_dim", type=int, default=128)
     p.add_argument("--dropout", type=float, default=0.2)
+
+    p.add_argument(
+        "--train_text_model",
+        action="store_true",
+        help="Also fine-tune a BERT text classifier on the same labels",
+    )
+    p.add_argument(
+        "--text_output_dir",
+        default="models/text_classifier",
+        help="Where to save the fine-tuned text classifier",
+    )
     p.add_argument(
         "--group_column",
         type=str,
         default="sponsor_class",
         help="Sensitive attribute used for adversarial debiasing",
     )
-    p.add_argument("--max_studies", type=int, default=5000)
+    p.add_argument("--max_studies", type=int, default=4000)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--max_length", type=int, default=128)
     p.add_argument("--iterations", type=int, default=100)
