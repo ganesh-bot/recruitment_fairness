@@ -166,8 +166,14 @@ def main(args):
         # ----------------------------------------------------------------
         X_out = torch.tensor(df_te2.to_numpy().astype(np.float32))
         with torch.no_grad():
-            logits = fair_model(X_out)
+            out = fair_model(X_out)
+            # unpack if adversarial returns (main, adv)
+            if isinstance(out, tuple):
+                logits = out[0]
+            else:
+                logits = out
             y_pred_out = torch.sigmoid(logits).cpu().numpy().reshape(-1)
+
 
     auc_out = roc_auc_score(y_te_out, y_pred_out)
     f1_out  = f1_score(y_te_out, y_pred_out>0.5)
