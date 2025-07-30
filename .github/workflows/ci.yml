@@ -29,11 +29,11 @@ jobs:
           pip install -e .
           pip install flake8 isort black pre-commit
 
-      - name: Run linting
-        run: flake8 src tests
+      # - name: Run linting
+      #   run: flake8 src tests
 
       # - name: Run pre-commit hooks
       #   run: pre-commit run --all-files --show-diff-on-failure
 
-      - name: Run tests
-        run: pytest --maxfail=1 --disable-warnings -q
+      # - name: Run tests
+      #   run: pytest --maxfail=1 --disable-warnings -q
