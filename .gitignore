@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Envs
+.venv/
+env/
+*.env
+
+# Models & logs
+models/
+wandb/
+lightning_logs/
+
+# VSCode
+.vscode/

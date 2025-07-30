@@ -102,13 +102,13 @@ class ClinicalTrialPreprocessor:
             trainval, test = train_test_split(
                 df,
                 test_size=0.20,
-                stratify=df["y_outcome"],
+                stratify=df["sponsor"],
                 random_state=self.random_state,
             )
             train, val = train_test_split(
                 trainval,
                 test_size=0.125,
-                stratify=trainval["y_outcome"],
+                stratify=trainval["sponsor"],
                 random_state=self.random_state,
             )
         except ValueError as e:
