@@ -6,6 +6,7 @@ import shap
 import torch
 
 from recruitment_fairness.models.fair_outcome_net import FairOutcomeNet
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 1) Load your test features
 X = np.load("models/X_test.npy", allow_pickle=True).astype(float)
@@ -21,6 +22,7 @@ if isinstance(ckpt, dict) and "state_dict" in ckpt:
     base_model.load_state_dict(ckpt["state_dict"])
 else:
     base_model = ckpt
+base_model = base_model.to(device)
 base_model.eval()
 
 
@@ -43,12 +45,13 @@ class ProbModel(torch.nn.Module):
 
 
 prob_model = ProbModel(base_model)
+prob_model = prob_model.to(device)
 prob_model.eval()
 
 # 4) Prepare background and input tensors
 bg_idxs = np.random.choice(len(X), size=min(100, len(X)), replace=False)
-background = torch.from_numpy(X[bg_idxs].astype(np.float32))
-X_tensor = torch.from_numpy(X.astype(np.float32))
+background = torch.from_numpy(X[bg_idxs].astype(np.float32)).to(device)
+X_tensor = torch.from_numpy(X.astype(np.float32)).to(device)
 
 # 5) Build DeepExplainer on probability model
 explainer = shap.DeepExplainer(prob_model, background)
@@ -61,5 +64,6 @@ if isinstance(shap_vals, (list, tuple)):
 
 # 7) Save SHAP values
 os.makedirs("models", exist_ok=True)
+shap_vals = np.array(shap_vals, copy=False)  # ensure it's a numpy array on CPU
 np.save("models/shap_tabular_svs.npy", shap_vals)
 print(f"✅ Wrote SHAP values of shape {shap_vals.shape} to models/shap_tabular_svs.npy")

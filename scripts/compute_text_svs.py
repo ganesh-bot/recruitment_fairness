@@ -6,6 +6,8 @@ import shap
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # 1) Load your pretrained (or fine-tuned) checkpoint
 #    If you haven’t fine-tuned a head,
 #  this will warn you—and SHAP on a random head isn’t very meaningful.
@@ -16,6 +18,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
     MODEL_ID,
     num_labels=2,  # adjust if you have more labels
 )
+model = model.to(device)
 model.eval()
 
 # 2) Read in your newline-delimited texts
@@ -39,6 +42,9 @@ def predict_fn(texts_batch):
         max_length=512,  # typically 512
         return_tensors="pt",
     )
+
+    enc = {k: v.to(device) for k, v in enc.items()}
+    
     with torch.no_grad():
         outputs = model(**enc)
     # logits → softmax → P(class=1)
@@ -57,3 +63,4 @@ shap_exp = explainer(texts, max_evals=50)
 os.makedirs("data", exist_ok=True)
 np.save("data/test_text_svs.npy", shap_exp.values)
 print(f"✅ Wrote SHAP array of shape {shap_exp.values.shape} to data/test_text_svs.npy")
+
