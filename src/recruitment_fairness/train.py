@@ -2,6 +2,7 @@
 import argparse
 import os
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -22,11 +23,20 @@ from recruitment_fairness.models.fair_outcome_net import (
 # 0) Device selection
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 def main(args):
     # 1) Fetch or load raw data
-    collector = ClinicalTrialsWebCollector(output_dir=args.data_raw)
-    df_raw = collector.search_trials("", args.max_studies)
+    raw_dir = Path(args.data_raw)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    if args.skip_collect or list(raw_dir.glob("raw_clinical_trials_*.csv")):
+        # reuse the latest existing CSV
+        preproc_helper = ClinicalTrialPreprocessor(
+            data_dir=args.data_raw, processed_dir=args.data_processed, random_state=args.seed
+        )
+        df_raw = preproc_helper.load_latest_raw()
+    else:
+        # first time: fetch from API
+        collector = ClinicalTrialsWebCollector(output_dir=args.data_raw)
+        df_raw = collector.search_trials("", args.max_studies)
 
     # 2) Preprocess & split (80/10/10)
     preproc = ClinicalTrialPreprocessor(
@@ -277,6 +287,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--data_raw", default="data/raw")
     parser.add_argument("--data_processed", default="data/processed")
+    parser.add_argument(
+        "--skip_collect",
+        action="store_true",
+        help="If set, do not fetch new trials; load the latest CSV from --data_raw"
+    )
     parser.add_argument("--model_dir", default="models")
     parser.add_argument(
         "--model_type",

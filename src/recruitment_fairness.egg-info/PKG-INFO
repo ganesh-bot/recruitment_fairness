@@ -1,3 +1,5 @@
-Metadata-Version: 2.4
+Metadata-Version: 2.1
 Name: recruitment_fairness
 Version: 0.1.0
+Summary: Recruitment‑aware trial outcome prediction with fairness modules
+Author: Ganesh Pathak

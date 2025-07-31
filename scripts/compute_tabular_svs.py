@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import os
+import os,argparse
 
 import numpy as np
 import shap
@@ -8,8 +8,21 @@ import torch
 from recruitment_fairness.models.fair_outcome_net import FairOutcomeNet
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# 0) parse args
+parser = argparse.ArgumentParser()
+parser.add_argument("--X",         required=True,
+                    help="Path to numeric X_test.npy")
+parser.add_argument("--svs",       required=True,
+                    help="Where to write shap_tabular_svs.npy")
+parser.add_argument("--background_size", type=int, default=100)
+args = parser.parse_args()
+
 # 1) Load your test features
-X = np.load("models/X_test.npy", allow_pickle=True).astype(float)
+X = np.load(args.X, allow_pickle=True)
+try:
+    X = X.astype(np.float32)
+except Exception as e:
+    raise ValueError(f"Your X contains non‐numeric values: {e}")
 
 # 2) Load your MLP checkpoint and rebuild the model if needed
 ckpt = torch.load("models/fair_outcome_mlp.pt", map_location="cpu")
@@ -63,7 +76,6 @@ if isinstance(shap_vals, (list, tuple)):
     shap_vals = shap_vals[0]
 
 # 7) Save SHAP values
-os.makedirs("models", exist_ok=True)
-shap_vals = np.array(shap_vals, copy=False)  # ensure it's a numpy array on CPU
-np.save("models/shap_tabular_svs.npy", shap_vals)
+os.makedirs(os.path.dirname(args.svs), exist_ok=True)
+np.save(args.svs, shap_vals)
 print(f"✅ Wrote SHAP values of shape {shap_vals.shape} to models/shap_tabular_svs.npy")

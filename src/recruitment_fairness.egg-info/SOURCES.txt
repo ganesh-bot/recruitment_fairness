@@ -1,7 +1,10 @@
+setup.cfg
 setup.py
 src/recruitment_fairness/__init__.py
+src/recruitment_fairness/evaluate.py
+src/recruitment_fairness/train.py
 src/recruitment_fairness.egg-info/PKG-INFO
 src/recruitment_fairness.egg-info/SOURCES.txt
 src/recruitment_fairness.egg-info/dependency_links.txt
 src/recruitment_fairness.egg-info/top_level.txt
-tests/test_loader.py
+tests/test_dummy.py
