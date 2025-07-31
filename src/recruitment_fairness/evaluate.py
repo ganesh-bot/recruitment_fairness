@@ -179,6 +179,10 @@ def main(args):
     f1_out  = f1_score(y_te_out, y_pred_out>0.5)
     acc_out = accuracy_score(y_te_out, y_pred_out>0.5)
 
+    # at the end of main(), before metrics_only return
+    np.save(os.path.join(args.model_dir, "y_true_out.npy"), y_te_out)
+    np.save(os.path.join(args.model_dir, "y_pred_out.npy"), y_pred_out)
+
     # 11) Metrics-only printout
     if args.metrics_only:
         print("\n=== Metrics Only ===")
@@ -199,6 +203,22 @@ def main(args):
             print(f"TPR[{g}]: {tpr:.3f}")
             tprs.append(tpr)
         print(f"ΔTPR: {(max(tprs)-min(tprs)):.3f}")
+        # --- Save summary JSON even in metrics_only mode ---
+        summary = pd.DataFrame([{
+            "model":      os.path.basename(args.model_dir),
+            "model_type": args.model_type,
+            "outcome_auc":   auc_out,
+            "outcome_f1":    f1_out,
+            "outcome_acc":   acc_out,
+            "recruit_auc":   auc_rec,
+            "recruit_f1":    f1_rec,
+            "recruit_acc":   acc_rec,
+            "recruit_mae":   (mean_absolute_error(y_te_rec, y_pred_rec) if rec_model else None),
+            "delta_tpr":     float(max(tprs)-min(tprs)),
+        }])
+        out_json = os.path.join(args.model_dir, "metrics_summary.json")
+        summary.to_json(out_json, orient="records", indent=2)
+        print(f"✅ Wrote summary JSON to {out_json}")
 
         return
 

@@ -99,18 +99,25 @@ class ClinicalTrialPreprocessor:
 
         # 5) Train / Val / Test split (80/10/10 stratified on y_outcome)
         try:
-            trainval, test = train_test_split(
-                df,
-                test_size=0.20,
-                stratify=df["sponsor"],
-                random_state=self.random_state,
+            # 2a) Merge tiny sponsor groups into "OTHER" so stratify works
+            # 1) Decide minimum count = number of folds = 3
+            min_count = 3
+
+            # 2) Find all sponsor_class values with fewer than min_count
+            vc = df["sponsor_class"].value_counts()
+            rare = vc[vc < min_count].index.tolist()
+
+            # 3) Replace ALL of those with "OTHER"
+            df["sponsor_strat"] = df["sponsor_class"].replace(rare, "OTHER")            # 2b) Now do 80/10/10 stratified by sponsor_strat
+            train, temp = train_test_split(
+                df, test_size=0.2, random_state=self.random_state, stratify=df["sponsor_strat"]
             )
-            train, val = train_test_split(
-                trainval,
-                test_size=0.125,
-                stratify=trainval["sponsor"],
-                random_state=self.random_state,
+            val, test = train_test_split(
+                temp, test_size=0.5, random_state=self.random_state, stratify=temp["sponsor_strat"]
             )
+            # Drop the helper column
+            for d in (train, val, test):
+                d.drop(columns=["sponsor_strat"], inplace=True)
         except ValueError as e:
             print(f"⚠️ Stratified split failed ({e}) — falling back to random split")
             trainval, test = train_test_split(
