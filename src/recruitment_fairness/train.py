@@ -319,7 +319,7 @@ if __name__ == "__main__":
         help="Save directory for text classifier",
     )
     parser.add_argument("--group_column", type=str, default="sponsor_class")
-    parser.add_argument("--max_studies", type=int, default=4000)
+    parser.add_argument("--max_studies", type=int, default=10000)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--max_length", type=int, default=128)
     parser.add_argument("--iterations", type=int, default=100)
