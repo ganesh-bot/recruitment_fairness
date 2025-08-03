@@ -46,7 +46,12 @@ from recruitment_fairness.models.fair_outcome_net import FairOutcomeNet, FairOut
 
 from recruitment_fairness.eval.plotting import plot_delta_tpr, plot_roc_curves, plot_delta_tpr,fairness_report_by_group
 
+from recruitment_fairness.eval.fairness_audit import audit_groups
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def main(args):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # 1) Load train/test tables
     train = pd.read_csv(os.path.join(args.data_processed, "train.csv"), index_col=0)
     test  = pd.read_csv(os.path.join(args.data_processed, "test.csv"),  index_col=0)
@@ -99,8 +104,13 @@ def main(args):
     y_te_rec   = test["y_recruit"].to_numpy()
     y_te_out   = test["y_outcome"].to_numpy()
     group_test = test[args.group_column].to_numpy()
+    for g in np.unique(group_test):
+        mask = group_test == g
+        pos = (y_te_out[mask] == 1).sum()
+        neg = (y_te_out[mask] == 0).sum()
+        print(f"Group {g!r}: {pos} positives, {neg} negatives")
 
-    # 7) Load RecruitmentNet if exists
+      # 7) Load RecruitmentNet if exists
     rec_path = os.path.join(args.model_dir, "recruitment.cbm")
     rec_model = None
     if os.path.exists(rec_path):
@@ -117,7 +127,7 @@ def main(args):
         adv_file = os.path.join(args.model_dir, "fair_outcome_adv_mlp.pt")
         std_file = os.path.join(args.model_dir, "fair_outcome_mlp.pt")
         ckpt_file = adv_file if os.path.exists(adv_file) else std_file
-        ckpt      = torch.load(ckpt_file, map_location="cpu")
+        ckpt      = torch.load(ckpt_file, map_location=device)
         if "n_groups" in ckpt:
             fair_model = FairOutcomeAdvNet(
                 input_dim=ckpt["input_dim"],
@@ -133,6 +143,7 @@ def main(args):
                 dropout=ckpt.get("dropout",0.2),
             )
         fair_model.load_state_dict(ckpt["state_dict"])
+        fair_model.to(device)
         fair_model.eval()
 
     # 9) Recruitment predictions & metrics
@@ -164,7 +175,7 @@ def main(args):
             if df_te2[col].dtype == "object" or pd.api.types.is_categorical_dtype(df_te2[col]):
                 df_te2[col] = pd.Categorical(df_te2[col]).codes
         # ----------------------------------------------------------------
-        X_out = torch.tensor(df_te2.to_numpy().astype(np.float32))
+        X_out = torch.tensor(df_te2.to_numpy().astype(np.float32)).to(device)
         with torch.no_grad():
             out = fair_model(X_out)
             # unpack if adversarial returns (main, adv)
@@ -172,7 +183,8 @@ def main(args):
                 logits = out[0]
             else:
                 logits = out
-            y_pred_out = torch.sigmoid(logits).cpu().numpy().reshape(-1)
+            # bring predictions back to CPU for numpy
+            y_pred_out = torch.sigmoid(logits).detach().cpu().numpy().reshape(-1)
 
 
     auc_out = roc_auc_score(y_te_out, y_pred_out)
@@ -194,31 +206,50 @@ def main(args):
         print(f"Outcome     → AUC {auc_out:.3f}, F1 {f1_out:.3f}, Acc {acc_out:.3f}")
 
         # Fairness ΔTPR
-        tprs = []
-        for g in np.unique(group_test):
-            mask = group_test == g
-            tp = ((y_te_out[mask]==1)&(y_pred_out[mask]>0.5)).sum()
-            fn = ((y_te_out[mask]==1)&(y_pred_out[mask]<=0.5)).sum()
-            tpr = tp/(tp+fn) if tp+fn>0 else np.nan
-            print(f"TPR[{g}]: {tpr:.3f}")
-            tprs.append(tpr)
-        print(f"ΔTPR: {(max(tprs)-min(tprs)):.3f}")
+        # New modular code using fairness_audit.py
+        group_labels = {args.group_column: group_test}
+
+        fairness_report = audit_groups(
+            y_true=y_te_out,
+            y_pred=(y_pred_out > 0.5).astype(int),
+            group_labels=group_labels,
+            y_proba=y_pred_out  # for AUC computation
+        )
+
+        # Print detailed fairness metrics
+        for group, metrics in fairness_report['per_group'][args.group_column].items():
+            print(f"\nMetrics for Group '{group}':")
+            for metric_name, metric_value in metrics.items():
+                print(f"  {metric_name}: {metric_value}")
+
+        # Print Delta Metrics
+        print("\n=== Fairness Δ Metrics ===")
+        for delta_metric, delta_values in fairness_report.items():
+            if delta_metric.startswith('Δ'):
+                delta_val = delta_values[args.group_column]
+                print(f"{delta_metric}: {delta_val}")
+
         # --- Save summary JSON even in metrics_only mode ---
         summary = pd.DataFrame([{
-            "model":      os.path.basename(args.model_dir),
+            "model": os.path.basename(args.model_dir),
             "model_type": args.model_type,
-            "outcome_auc":   auc_out,
-            "outcome_f1":    f1_out,
-            "outcome_acc":   acc_out,
-            "recruit_auc":   auc_rec,
-            "recruit_f1":    f1_rec,
-            "recruit_acc":   acc_rec,
-            "recruit_mae":   (mean_absolute_error(y_te_rec, y_pred_rec) if rec_model else None),
-            "delta_tpr":     float(max(tprs)-min(tprs)),
+            "outcome_auc": auc_out,
+            "outcome_f1": f1_out,
+            "outcome_acc": acc_out,
+            "recruit_auc": auc_rec,
+            "recruit_f1": f1_rec,
+            "recruit_acc": acc_rec,
+            "recruit_mae": (mean_absolute_error(y_te_rec, y_pred_rec) if rec_model else None),
+            "delta_tpr": fairness_report["ΔTPR"][args.group_column],
+            "delta_fpr": fairness_report["ΔFPR"][args.group_column],
+            "delta_auc": fairness_report["ΔAUC"][args.group_column],
+            "delta_positive_rate": fairness_report["ΔP"][args.group_column],
         }])
+
         out_json = os.path.join(args.model_dir, "metrics_summary.json")
         summary.to_json(out_json, orient="records", indent=2)
-        print(f"✅ Wrote summary JSON to {out_json}")
+        print(f"✅ Wrote enhanced fairness summary JSON to {out_json}")
+
 
         return
 

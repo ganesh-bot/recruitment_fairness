@@ -99,6 +99,7 @@ def main(args):
             depth=args.depth,
             learning_rate=args.lr,
             random_state=args.seed,
+            auto_class_weights='Balanced'
         )
         rec_net.fit(pool_tr, eval_set=pool_va, early_stopping_rounds=args.early_stop)
 

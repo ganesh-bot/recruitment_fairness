@@ -63,7 +63,14 @@ def train_fair_outcome_net(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = FairOutcomeNet(input_dim, hidden_dim=hidden_dim, dropout=dropout).to(device)
-    bce = nn.BCEWithLogitsLoss()
+    # 1) Compute class balance from NumPy labels
+    n_pos      = (y_train == 1).sum()
+    n_neg      = (y_train == 0).sum()
+    base_pw     = n_neg / n_pos
+    weight_factor = 0.8  # e.g. try 0.2, 0.5, 0.8
+    pos_weight  = torch.tensor(base_pw * weight_factor, device=device)
+    bce         = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
     opt = optim.Adam(model.parameters(), lr=lr)
 
     X_train = torch.tensor(X_train, dtype=torch.float32, device=device)
@@ -124,7 +131,7 @@ class FairOutcomeAdvNet(nn.Module):
         n_groups: int,
         hidden_dim: int = 128,
         dropout: float = 0.2,
-        lambda_adv: float = 0.1,
+        lambda_adv: float = 0.01,
     ):
         super().__init__()
         self.shared = nn.Sequential(
@@ -172,7 +179,7 @@ def train_fair_outcome_net_adv(
     lr: float = 1e-3,
     hidden_dim: int = 128,
     dropout: float = 0.2,
-    lambda_adv: float = 0.1,
+    lambda_adv: float = 0.01,
     patience: int = 5,
 ) -> FairOutcomeAdvNet:
     """
@@ -193,7 +200,12 @@ def train_fair_outcome_net_adv(
         lambda_adv=lambda_adv,
     ).to(device)
 
-    bce = nn.BCEWithLogitsLoss()
+    n_pos      = (y_train == 1).sum()
+    n_neg      = (y_train == 0).sum()
+    base_pw     = n_neg / n_pos
+    weight_factor = 0.8  # e.g. try 0.2, 0.5, 0.8
+    pos_weight  = torch.tensor(base_pw * weight_factor, device=device)
+    bce        = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     ce = nn.CrossEntropyLoss()
     opt = optim.Adam(model.parameters(), lr=lr)
 
