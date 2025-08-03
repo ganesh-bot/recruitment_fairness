@@ -85,13 +85,14 @@ class ClinicalTrialPreprocessor:
             return re.sub(r"\s+", " ", text).strip()
 
         df["combined_text"] = (
-            df["brief_title"].fillna("")
-            + "  "
-            + df["official_title"].fillna("")
-            + "  "
-            + df["brief_summary"].fillna("")
-            + "  "
-            + df["detailed_description"].fillna("")
+            # df["brief_title"].fillna("")
+            # + "  "
+            # + df["official_title"].fillna("")
+            # + "  "
+            # + df["brief_summary"].fillna("")
+            # + "  "
+            # + 
+            df["detailed_description"].fillna("")
             + "  "
             + df.get("eligibility_criteria", "").fillna("")
         ).apply(clean_whitespace)

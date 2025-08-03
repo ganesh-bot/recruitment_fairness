@@ -140,6 +140,7 @@ def main(args):
             depth=args.depth,
             learning_rate=args.lr,
             random_state=args.seed,
+            auto_class_weights='Balanced'
         )
         out_net.fit(pool2_tr, eval_set=pool2_va, early_stopping_rounds=args.early_stop)
 
@@ -305,7 +306,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Use adversarial debiasing head (MLP only)",
     )
-    parser.add_argument("--lambda_adv", type=float, default=0.1)
+    parser.add_argument("--lambda_adv", type=float, default=0.01)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--hidden_dim", type=int, default=128)
     parser.add_argument("--dropout", type=float, default=0.2)
@@ -320,7 +321,7 @@ if __name__ == "__main__":
         help="Save directory for text classifier",
     )
     parser.add_argument("--group_column", type=str, default="sponsor_class")
-    parser.add_argument("--max_studies", type=int, default=4000)
+    parser.add_argument("--max_studies", type=int, default=10000)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--max_length", type=int, default=128)
     parser.add_argument("--iterations", type=int, default=100)
