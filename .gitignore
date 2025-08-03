@@ -17,3 +17,5 @@ lightning_logs/
 
 # VSCode
 .vscode/
+
+data/
