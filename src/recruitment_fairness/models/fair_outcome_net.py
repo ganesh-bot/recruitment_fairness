@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from recruitment_fairness.utils.fairness_utils import compute_group_metrics
+from sklearn.metrics import roc_auc_score
 
 # ---------------------------
 # Gradient Reversal Layer
@@ -218,6 +220,8 @@ def train_fair_outcome_net_adv(
     y_val = torch.tensor(y_val, dtype=torch.float32, device=device).view(-1, 1)
     g_val = torch.tensor(g_val, dtype=torch.long, device=device)
 
+    # initialize before loop
+    best_composite = -float("inf")
     best_val = float("inf")
     best_state = None
     wait = 0
@@ -229,27 +233,50 @@ def train_fair_outcome_net_adv(
         y_logit, g_logits = model(X_train)
         loss_out = bce(y_logit, y_train)
         loss_adv = ce(g_logits, g_train)
-        loss = (
-            loss_out + loss_adv
-        )  # GRL already applies negative gradient through adv branch
+        loss = loss_out + loss_adv  # GRL already flips adversary gradient
 
         loss.backward()
         opt.step()
 
+        # validation + fairness
         model.eval()
         with torch.no_grad():
             yv_logit, gv_logits = model(X_val)
             val_loss = bce(yv_logit, y_val) + ce(gv_logits, g_val)
 
+            # fairness-aware addition
+            y_val_probs = torch.sigmoid(yv_logit).cpu().numpy().flatten()
+            y_val_pred = (y_val_probs > 0.5).astype(int)
+            y_true_np = y_val.cpu().numpy().flatten()
+            g_val_np = g_val.cpu().numpy()
+
+            fair_report = compute_group_metrics(
+                y_true=y_true_np,
+                y_pred=y_val_pred,
+                group_arr=g_val_np,
+                y_proba=y_val_probs,
+                min_group_size=5,
+            )
+            delta_tpr = fair_report["ΔTPR"] or 0.0
+            delta_auc = fair_report["ΔAUC"] if fair_report["ΔAUC"] is not None else 0.0
+
+            # compute val AUC and composite score
+            val_auc = roc_auc_score(y_true_np, y_val_probs) if len(np.unique(y_true_np)) > 1 else 0.0
+            alpha = 0.8  # tradeoff between accuracy and fairness
+            composite_score = alpha * val_auc - (1 - alpha) * delta_tpr
+
+        # logging
         if epoch == 1 or epoch % 5 == 0:
             print(
                 f"[FairOutcomeAdvNet] epoch={epoch:03d} "
-                f"train_loss={loss.item():.4f} (out={loss_out.item():.4f},"
-                f" adv={loss_adv.item():.4f}) "
-                f"val_loss={val_loss.item():.4f}"
+                f"train_loss={loss.item():.4f} (out={loss_out.item():.4f}, adv={loss_adv.item():.4f}) "
+                f"val_loss={val_loss.item():.4f} ΔTPR={delta_tpr:.3f} ΔAUC={delta_auc:.3f} "
+                f"val_auc={val_auc:.3f} composite={composite_score:.3f}"
             )
 
-        if val_loss.item() < best_val:
+        # early stopping on composite
+        if composite_score > best_composite + 1e-6:
+            best_composite = composite_score
             best_val = val_loss.item()
             best_state = model.state_dict()
             wait = 0
@@ -258,6 +285,7 @@ def train_fair_outcome_net_adv(
             if wait >= patience:
                 print(f"[FairOutcomeAdvNet] Early stopping at epoch {epoch}")
                 break
+
 
     if best_state is not None:
         model.load_state_dict(best_state)
