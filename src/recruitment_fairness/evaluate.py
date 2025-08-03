@@ -31,7 +31,7 @@ Usage:
 import argparse
 import os
 import json
-
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
@@ -218,6 +218,15 @@ def main(args):
         print(f"\nMetrics for Group '{group}':")
         for metric_name, metric_value in metrics.items():
             print(f"  {metric_name}: {metric_value}")
+    group_metrics = fairness_report["per_group"][args.group_column]
+    df_group = pd.DataFrame.from_dict(group_metrics, orient="index")
+    df_group.index.name = args.group_column
+    df_group.reset_index(inplace=True)
+
+    out_csv = Path(args.model_dir) / "fairness_reports" / f"fairness_per_group_{args.group_column}.csv"
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    df_group.to_csv(out_csv, index=False)
+    print(f"✅ Saved per-group fairness metrics to {out_csv}")
 
     # Print Delta Metrics
     print("\n=== Fairness Δ Metrics ===")
@@ -259,42 +268,6 @@ def main(args):
 
         return
 
-    # # --- 12) SUMMARY TABLE & JSON FOR REPORT ---
-    # # Compute delta_tpr if not already
-    # if 'tprs' not in locals():
-    #     tprs = []
-    #     for g in np.unique(group_test):
-    #         mask = group_test == g
-    #         tp = ((y_te_out[mask]==1)&(y_pred_out[mask]>0.5)).sum()
-    #         fn = ((y_te_out[mask]==1)&(y_pred_out[mask]<=0.5)).sum()
-    #         tprs.append(tp/(tp+fn) if tp+fn>0 else np.nan)
-    # delta_tpr = float(np.nanmax(tprs) - np.nanmin(tprs))
-
-    # # Build a DataFrame summarizing all three baselines
-    # # You can parametrize this depending on which model_dir you're in,
-    # # but here’s the general pattern:
-    # summary = pd.DataFrame([{
-    #     "model":      os.path.basename(args.model_dir),
-    #     "model_type": args.model_type,
-    #     "outcome_auc":   auc_out,
-    #     "outcome_f1":    f1_out,
-    #     "outcome_acc":   acc_out,
-    #     "recruit_auc":   auc_rec,
-    #     "recruit_f1":    f1_rec,
-    #     "recruit_acc":   acc_rec,
-    #     "recruit_mae":   (mean_absolute_error(y_te_rec, y_pred_rec) if rec_model else None),
-    #     "delta_tpr":     delta_tpr,
-    # }])
-
-    # # Print it as a table
-    # print("\n=== Summary Table ===")
-    # print(summary.to_markdown(index=False))
-
-    # # Save to JSON
-    # out_json = os.path.join(args.model_dir, "metrics_summary.json")
-    # summary.to_json(out_json, orient="records", indent=2)
-    # print(f"✅ Wrote summary JSON to {out_json}")
-    # # ------------------------------------------------
 
 
     # 13) Full plotting logic goes here (unchanged)…
