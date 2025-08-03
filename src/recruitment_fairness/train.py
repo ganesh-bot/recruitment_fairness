@@ -173,6 +173,7 @@ def main(args):
                 lambda_adv=args.lambda_adv,
             )
             out_path = os.path.join(args.model_dir, "fair_outcome_adv_mlp.pt")
+            os.makedirs(args.model_dir, exist_ok=True) 
             torch.save({
                 "state_dict": fair_net.state_dict(),
                 "input_dim":  X_train.shape[1],
@@ -192,6 +193,7 @@ def main(args):
                 dropout=args.dropout,
             ).to(device)
             out_path = os.path.join(args.model_dir, "fair_outcome_mlp.pt")
+            os.makedirs(args.model_dir, exist_ok=True) 
             torch.save({
                 "state_dict": fair_net.state_dict(),
                 "input_dim":  X_train.shape[1],

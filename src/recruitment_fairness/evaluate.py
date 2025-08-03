@@ -44,7 +44,7 @@ from recruitment_fairness.data.preprocess import ClinicalTrialPreprocessor
 from recruitment_fairness.data.clinicalbert_embedder import ClinicalBERTEmbedder
 from recruitment_fairness.models.fair_outcome_net import FairOutcomeNet, FairOutcomeAdvNet
 
-from recruitment_fairness.eval.plotting import plot_delta_tpr, plot_roc_curves, plot_delta_tpr,fairness_report_by_group
+from recruitment_fairness.eval.plotting import plot_delta_tpr, plot_roc_curves,fairness_report_by_group
 
 from recruitment_fairness.eval.fairness_audit import audit_groups
 
@@ -207,6 +207,12 @@ def main(args):
         y_proba=y_pred_out  # for AUC computation
     )
 
+    # Fairness ΔTPR etc. – extract once so we can reuse
+    delta_tpr = fairness_report["ΔTPR"][args.group_column]
+    delta_fpr = fairness_report["ΔFPR"][args.group_column]
+    delta_auc = fairness_report["ΔAUC"][args.group_column]
+    delta_positive_rate = fairness_report["ΔP"][args.group_column]
+
     # Print detailed fairness metrics
     for group, metrics in fairness_report['per_group'][args.group_column].items():
         print(f"\nMetrics for Group '{group}':")
@@ -231,10 +237,10 @@ def main(args):
         "recruit_f1": f1_rec,
         "recruit_acc": acc_rec,
         "recruit_mae": (mean_absolute_error(y_te_rec, y_pred_rec) if rec_model else None),
-        "delta_tpr": fairness_report["ΔTPR"][args.group_column],
-        "delta_fpr": fairness_report["ΔFPR"][args.group_column],
-        "delta_auc": fairness_report["ΔAUC"][args.group_column],
-        "delta_positive_rate": fairness_report["ΔP"][args.group_column],
+        "delta_tpr": delta_tpr,
+        "delta_fpr": delta_fpr,
+        "delta_auc": delta_auc,
+        "delta_positive_rate": delta_positive_rate,
     }])
 
     out_json = os.path.join(args.model_dir, "metrics_summary.json")
